@@ -1,0 +1,51 @@
+package com.drone.system.controller;
+
+import com.drone.system.configure.TokenService;
+import com.drone.system.domain.AjaxResult;
+import com.drone.system.domain.LoginBody;
+import com.drone.system.domain.LoginUser;
+import com.drone.system.domain.User;
+import com.drone.system.service.IUserService;
+import jakarta.annotation.Resource;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * 登录验证
+ */
+@RestController
+public class LoginController extends BaseController{
+    @Resource
+    private IUserService userService;
+    @Autowired
+    private TokenService tokenService;
+
+    /**
+     * 登录接口
+     */
+    @PostMapping("/login")
+    public AjaxResult login(@RequestBody LoginBody loginBody){
+        //1.验证参数是否为空
+        if(loginBody.getUserName() == null || loginBody.getPassword() == null ||
+                loginBody.getUserName().trim().isEmpty() || loginBody.getPassword().trim().isEmpty()){
+            throw new RuntimeException("用户名或密码为空！");
+        }
+        //2.验证用户是否存在
+        User user = userService.selectUserByUserName(loginBody.getUserName());
+        if(user == null){
+            throw new RuntimeException("用户名错误！");
+        }
+        //3.验证密码是否正确
+        if(!loginBody.getPassword().equals(user.getPassword())){
+            throw new RuntimeException("密码错误！");
+        }
+        //4.创建登录用户对象
+        LoginUser loginUser = new LoginUser(user.getUserId(),user);
+        //5.生成JWT令牌
+        String token = tokenService.createToken(loginUser);
+        //6.返回成功结果，并且包含Token
+        return success().put("token",token);
+    }
+}
