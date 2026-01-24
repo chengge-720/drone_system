@@ -12,6 +12,9 @@ import java.util.HashMap;
 
 /**
  * 首页控制器
+ * 前端：用户在前端请求数据---->后端：Controller(接收数据、响应数据)---->Service(处理业务逻辑)
+ * ---->Mapper(Dao,数据访问,包括增删改查)---->数据返回前端
+ *
  */
 @RestController
 @RequestMapping("/")
