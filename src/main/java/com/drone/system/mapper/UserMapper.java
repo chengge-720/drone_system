@@ -7,11 +7,9 @@ import org.apache.ibatis.annotations.Mapper;
  * 用户Mapper
  */
 @Mapper
-public class UserMapper {
+public interface UserMapper {
     /**
      * 根据用户名查询用户
      */
-    public User selectUserByUserName(String userName){
-
-    }
+    public User selectUserByUserName(String userName);
 }

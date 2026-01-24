@@ -14,6 +14,11 @@ spring:
     url: jdbc:mysql://localhost:3306/drone_system?useUnicode=true&characterEncoding=utf8&zeroDataTimeBehavior=convertToNull&useSLL=true&serverTimezone=GMT%2B8
     username: root
     password: 123456
+  #pei zhi security de mo ren yong hu zhang hao mi ma
+  security:
+    user:
+      name: 123
+      password: 123
 
 server:
   port: 8080
@@ -30,8 +35,18 @@ logging:
 
 # Mabatis??????????????????????
 mybatis:
-  type-aliases-package: com.drone.**.mapper
+
+  type-aliases-package: com.drone.**.domain
   mapper-locations: classpath*:mapper/**/*Mapper.xml
   configuration:
     # ??????????????Mybatis???sql??
     log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+
+#JWT shi dian zi shen fen zheng
+token:
+  #qing qiu tou de zi duan ming
+  header: Authorization
+  #'an hao'
+  secret: dwanifnkalkfnjknskzncoinwqijidnkzclknjfbfnaknfjdjfnajknefndjjnvjksnfwdasjkbfawknjfsnjf
+  #lin pai you xiao qi
+  expireTime: 300

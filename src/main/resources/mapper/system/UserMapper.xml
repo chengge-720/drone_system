@@ -2,13 +2,25 @@
 <!DOCTYPE mapper
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--主键字段映射-->
 <mapper namespace="com.drone.system.mapper.UserMapper">
-    <resultMap id="UserResult" type="com.drone.system.domain.User">
+    <!--resultMap作用：将数据库查询的结果映射到UserResult上-->
+    <resultMap id="UserResult" type="User">
+        <!--主键值映射-->
         <id property="userId" column="user_id"/>
+        <!--普通字段映射-->
         <result property="userName" column="user_name"/>
         <result property="sex" column="sex"/>
         <result property="avatar" column="avatar"/>
         <result property="password" column="password"/>
         <result property="createTime" column="create_time"/>
     </resultMap>
+    <!--以下两种定义方法相同-->
+    <!--<select id="selectUserByUserName" resultType="User"></select> -->
+    <!--根据用户名查询数据-->
+    <select id="selectUserByUserName" resultMap="UserResult" parameterType="String">
+        select user_id, user_name, sex, avatar, password, create_time
+        from user
+        where user_name = #{userName}
+    </select>
 </mapper>

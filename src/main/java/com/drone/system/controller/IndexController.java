@@ -1,8 +1,12 @@
 package com.drone.system.controller;
 
 import com.drone.system.domain.AjaxResult;
+import com.drone.system.domain.User;
+import com.drone.system.service.IUserService;
+import jakarta.annotation.Resource;
 import org.apache.ibatis.annotations.Mapper;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -19,16 +23,20 @@ import java.util.HashMap;
 @RestController
 @RequestMapping("/")
 public class IndexController extends BaseController{
+    @Resource
+    private IUserService userService;
+
     @GetMapping
     public AjaxResult home(){
         return success("恭喜你成功启动了后端！");
     }
 
-    @GetMapping("/test")
-    public AjaxResult test(){
-        HashMap<Object,Object> map = new HashMap<>();
-        map.put("userId","1");
-        map.put("userName","张三");
-        return toAjax(1);
+    @GetMapping("/selectUserByUserName/{userName}")
+    public AjaxResult test(@PathVariable String userName){
+        User user = userService.selectUserByUserName(userName);
+        if(user == null){
+            return error("用户名为：" + userName + "的用户不存在！");
+        }
+        return success(user);
     }
 }
