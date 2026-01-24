@@ -16,6 +16,6 @@ import java.time.LocalTime;
 public class IndexController {
     @GetMapping
     public AjaxResult home(){
-        return AjaxResult.success("成功！").put("username","张三");
+        return AjaxResult.success("恭喜你成功启动了后端！");
     }
 }
