@@ -50,7 +50,7 @@ public class SecurityConfig {
                 //路径权限配置
                 .authorizeHttpRequests(req->
                         //登录和注册接口是公开接口，所有人都可以访问
-                        req.requestMatchers("/login","/register").permitAll()
+                        req.requestMatchers("/login","/register","/profile/**").permitAll()
                                 //而其他接口必须授权
                                 .anyRequest().authenticated()
                         )
