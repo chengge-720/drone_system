@@ -10,6 +10,8 @@ public class DroneApplication {
     public static void main(String[] args) {
         //启动springboot应用
         SpringApplication.run(DroneApplication.class, args);
+        //在控制台中打印成功信息
+        System.out.println("后端启动成功！");
     }
 
 }
