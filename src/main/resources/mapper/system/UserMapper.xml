@@ -23,4 +23,10 @@
         from user
         where user_name = #{userName}
     </select>
+    <!--通过用户Id查询用户信息-->
+    <select id="selectUserByUserId" resultMap="UserResult" parameterType="Long">
+        select user_id, user_name, sex, avatar, password, create_time
+        from user
+        where user_id = #{userId}
+    </select>
 </mapper>

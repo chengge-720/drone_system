@@ -9,4 +9,10 @@ public interface IUserService {
 
     public User selectUserByUserName(String userName);
 
+    /**
+     * 通过用户Id查询用户信息
+     * @param userId
+     * @return
+     */
+    User selectUserByUserId(Long userId);
 }

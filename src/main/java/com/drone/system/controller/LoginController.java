@@ -6,8 +6,10 @@ import com.drone.system.domain.LoginBody;
 import com.drone.system.domain.LoginUser;
 import com.drone.system.domain.User;
 import com.drone.system.service.IUserService;
+import com.drone.system.utils.SecurityUtils;
 import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -47,5 +49,16 @@ public class LoginController extends BaseController{
         String token = tokenService.createToken(loginUser);
         //6.返回成功结果，并且包含Token
         return success().put("token",token);
+    }
+
+    /**
+     * 获取用户信息
+     */
+    @GetMapping("/getInfo")
+    public AjaxResult getInfo(){
+        //获取当前用户ID
+        Long userId = SecurityUtils.getUserId();
+        User user = userService.selectUserByUserId(userId);
+        return success(user);
     }
 }

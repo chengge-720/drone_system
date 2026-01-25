@@ -16,4 +16,9 @@ public class UserServiceImpl implements IUserService {
     public User selectUserByUserName(String userName) {
         return userMapper.selectUserByUserName(userName);
     }
+
+    @Override
+    public User selectUserByUserId(Long userId) {
+        return userMapper.selectUserByUserId(userId);
+    }
 }

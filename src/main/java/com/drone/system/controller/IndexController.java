@@ -3,6 +3,7 @@ package com.drone.system.controller;
 import com.drone.system.domain.AjaxResult;
 import com.drone.system.domain.User;
 import com.drone.system.service.IUserService;
+import com.drone.system.utils.SecurityUtils;
 import jakarta.annotation.Resource;
 import org.apache.ibatis.annotations.Mapper;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -31,12 +32,8 @@ public class IndexController extends BaseController{
         return success("恭喜你成功启动了后端！");
     }
 
-    @GetMapping("/selectUserByUserName/{userName}")
-    public AjaxResult test(@PathVariable String userName){
-        User user = userService.selectUserByUserName(userName);
-        if(user == null){
-            return error("用户名为：" + userName + "的用户不存在！");
-        }
-        return success(user);
+    @GetMapping("/test")
+    public AjaxResult test(){
+        return success(SecurityUtils.getLoginUser());
     }
 }

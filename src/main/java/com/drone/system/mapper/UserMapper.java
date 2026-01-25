@@ -12,4 +12,6 @@ public interface UserMapper {
      * 根据用户名查询用户
      */
     public User selectUserByUserName(String userName);
+
+    User selectUserByUserId(Long userId);
 }
