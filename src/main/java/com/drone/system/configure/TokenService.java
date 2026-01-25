@@ -2,12 +2,17 @@ package com.drone.system.configure;
 
 import com.drone.system.domain.LoginUser;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.Resource;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import java.nio.charset.StandardCharsets;
 import java.security.Key;
@@ -20,6 +25,7 @@ import java.util.concurrent.TimeUnit;
  * 作用：JWT令牌的生成、解析、认证
  */
 @Component
+@Slf4j
 public class TokenService {
     //令牌自定义表示符，在application.yml内部定义
     @Value("${token.header}")
@@ -81,5 +87,50 @@ public class TokenService {
                 .compact();//生成字符串
     }
 
+    /**
+     * 从HTTP中提取token
+     */
+    public LoginUser getLoginUser(HttpServletRequest request){
+        String token = getToken(request);
+        if(!StringUtils.hasText(token)){
+            return null;
+        }
+        try{
+            //解析token
+            Claims claims = parseToken(token);
+            String userJson = claims.get("user_key",String.class);
+            return objectMapper.readValue(userJson, LoginUser.class);
 
+        }catch (Exception e){
+            log.info("解析用户信息异常=>{}",String.valueOf(e));
+        }
+        return null;
+    }
+    public String getToken(HttpServletRequest request){
+        String token = request.getHeader(header);
+        if(StringUtils.hasText(token) && token.startsWith("Bearer ")){
+            return token.substring(7);
+        }
+        return token;
+    }
+
+    public Claims parseToken(String token){
+        return Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build()
+                .parseClaimsJws(token)//解析token
+                .getBody();//获取数据
+
+    }
+
+    /**
+     * 验证令牌有效期
+     */
+    public void verifyToken(LoginUser loginUser){
+        Long expireTime = loginUser.getExpireTime();
+        long currentTime = System.currentTimeMillis();
+        if(expireTime - currentTime <= 0){
+            throw new RuntimeException("Token已过期");
+        }
+    }
 }

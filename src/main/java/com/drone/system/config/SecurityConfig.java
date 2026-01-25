@@ -1,5 +1,8 @@
 package com.drone.system.config;
 
+import com.drone.system.configure.JwtAuthenticationEntryPoint;
+import com.drone.system.configure.JwtAuthenticationTokenFilter;
+import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,6 +13,7 @@ import org.springframework.security.config.annotation.web.configurers.AbstractHt
 import org.springframework.security.config.annotation.web.configurers.HeadersConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
  * spring security 安全配置类
@@ -23,6 +27,13 @@ import org.springframework.security.web.SecurityFilterChain;
 @EnableMethodSecurity(securedEnabled = true)//启用方法级别的安全控制
 @Configuration
 public class SecurityConfig {
+
+    @Resource
+    private JwtAuthenticationEntryPoint authenticationEntryPoint;
+    @Resource
+    private JwtAuthenticationTokenFilter authenticationTokenFilter;
+
+    //安全过滤链
     @Bean
     protected SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
@@ -33,7 +44,25 @@ public class SecurityConfig {
                 //响应头配置
                 .headers( headers -> headers.frameOptions(frame->frame.sameOrigin()))
                 //禁用Session,使用无状态认证（JWT）
-                .sessionManagement(session->session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+                .sessionManagement(session->session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                //异常处理
+                .exceptionHandling(e->e.authenticationEntryPoint(authenticationEntryPoint))
+                //路径权限配置
+                .authorizeHttpRequests(req->
+                        //登录和注册接口是公开接口，所有人都可以访问
+                        req.requestMatchers("/login","/register").permitAll()
+                                //而其他接口必须授权
+                                .anyRequest().authenticated()
+                        )
+                //退出登录逻辑
+                .logout(logout->logout.logoutUrl("/logout")
+                        //退出成功
+                        .logoutSuccessHandler((req,res,auth)->res.setStatus(200))
+
+                )
+                //添加JWT过滤器
+                .addFilterBefore(authenticationTokenFilter, UsernamePasswordAuthenticationFilter.class);
+
         return http.build();
     }
 
