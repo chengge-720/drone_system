@@ -9,7 +9,7 @@ export default defineConfig(({ mode , command })=>{
     resolve: {
       alias: {
         '~': path.resolve(__dirname, './'),
-        '@': path.resolve(__dirname, '.src')
+        '@': path.resolve(__dirname, './src')
       }
     },
     extensions: [
@@ -35,6 +35,4 @@ export default defineConfig(({ mode , command })=>{
       }
     },
   }
-
-
 })
