@@ -3,7 +3,7 @@
 </script>
 
 <template>
-<div>注册页面</div>
+<div>你好！这是注册页面</div>
 </template>
 
 <style scoped>
