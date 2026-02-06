@@ -30,19 +30,16 @@ router.beforeEach((to,from,next) => {
         else{
             //用户信息为空
             if(useUserStore().name === ''){
-
                 isReLogin.show = true
-
                 useUserStore().getInfo().then(() => {
                     isReLogin.show = false
-
                     next({path:to.path})
                 }).catch(err => {
                     isReLogin.show = false
                     //获取用户信息失败
                     //删除令牌
                     useUserStore().logOut().then( ()=>{
-                        ElMessage.error(err)
+                        ElMessage.error(err?.message || '用户信息获取失败')
                         //跳转到登录页
                         next({path:'/login'})
                     })

@@ -36,7 +36,7 @@ const handleReLogin = () => {
         //清空用户登录信息
         useUserStore().logOut().then(() => {
             //退出后跳转登录页面
-            location.href = '/login'
+            location.href = '/login';
         })
     }).catch(() => {
         //取消路径

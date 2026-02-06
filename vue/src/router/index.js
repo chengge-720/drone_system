@@ -22,7 +22,7 @@ export const constantRouters = [
   },
   {
     path: '/',
-    component: () => import('@/views/layout/index.vue'),
+    component: Layout,
     redirect: 'index',
     children: [
       {

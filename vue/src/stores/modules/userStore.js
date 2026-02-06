@@ -53,8 +53,8 @@ const useUserStore = defineStore(
                             }
                         }
                         //更新Store状态
-                        this.id = user.userId
-                        this.name = user.username
+                        this.id = user.userId || user.id
+                        this.name = user.username || user.userName
                         this.avatar = avatar
                         //返回结果
                         resolve(res)//同时返回完整的响应数据
@@ -76,6 +76,9 @@ const useUserStore = defineStore(
                         //登出成功
                         //清空Store状态
                         this.token = ''
+                        this.id = ''
+                        this.name = ''
+                        this.avatar = ''
                         //删除令牌
                         removeToken()
                         //返回结果
