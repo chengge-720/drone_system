@@ -5,6 +5,7 @@ export default defineConfig(({ mode , command })=>{
   const env = loadEnv(mode, process.cwd())
   return {
     base: '/',
+      //加载环境变量，loadEnv()会根据当前的mode加载对应的.env文件
     plugins: createVitePlugins(env,command === 'build'),
     resolve: {
       alias: {
@@ -22,16 +23,17 @@ export default defineConfig(({ mode , command })=>{
         '.vue'
     ],
     server: {
-      host: true,
       port: 90,
+      host: true,
       open: true,
       proxy: {
-        //将所有以 /base 开头的请求，都代理到 target 属性指定的后端服务器，只有这样定义前端才能访问后端服务器
-        '/base': {
+        //代理所有请求到后端
+        '/base': {///base表示拦截以/base开头的请求
           target: 'http://localhost:8080',
           changeOrigin: true,
+          secure: false,
           rewrite: (p) => p.replace(/^\/base/, '')
-        }
+        },
       }
     },
   }

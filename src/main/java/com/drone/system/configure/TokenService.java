@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class TokenService {
     //令牌自定义表示符，在application.yml内部定义
-    @Value("${token.header}")
+    @Value("Authorization")
     private String header;
 
     //令牌秘钥
@@ -36,7 +36,7 @@ public class TokenService {
     private String secret;
 
     //令牌有效期
-    @Value("${token.expireTime}")
+    @Value("300")
     private int expireTime;
 
     //JWT签名秘钥
@@ -104,7 +104,7 @@ public class TokenService {
         }catch (Exception e){
             log.info("解析用户信息异常=>{}",String.valueOf(e));
         }
-        return null;
+        return null;//解析失败
     }
     public String getToken(HttpServletRequest request){
         String token = request.getHeader(header);

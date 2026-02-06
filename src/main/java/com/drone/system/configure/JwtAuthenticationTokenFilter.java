@@ -35,6 +35,15 @@ public class JwtAuthenticationTokenFilter extends OncePerRequestFilter {
      */
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+        // 检查是否是登录或注册接口，如果是，直接放行
+        /**
+         String requestURI = request.getRequestURI();
+        if ("/login".equals(requestURI) || "/register".equals(requestURI) || "/base/login".equals(requestURI) || "/base/register".equals(requestURI)) {
+            chain.doFilter(request, response);
+            return;
+        }
+         */
+        
         LoginUser loginUser = tokenService.getLoginUser(request);
         if(Objects.nonNull(loginUser) && SecurityContextHolder.getContext().getAuthentication() == null){
             try{

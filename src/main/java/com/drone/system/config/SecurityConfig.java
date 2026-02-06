@@ -14,6 +14,7 @@ import org.springframework.security.config.annotation.web.configurers.HeadersCon
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.http.HttpMethod;
 
 /**
  * spring security 安全配置类
@@ -50,7 +51,8 @@ public class SecurityConfig {
                 //路径权限配置
                 .authorizeHttpRequests(req->
                         //登录和注册接口是公开接口，所有人都可以访问
-                        req.requestMatchers("/login","/register","/profile/**").permitAll()
+                        req.requestMatchers("/login", "/register").permitAll()//, "/base/login", "/base/register"
+                            .requestMatchers("/profile/**").permitAll()
                                 //而其他接口必须授权
                                 .anyRequest().authenticated()
                         )
@@ -62,6 +64,8 @@ public class SecurityConfig {
                 )
                 //添加JWT过滤器
                 .addFilterBefore(authenticationTokenFilter, UsernamePasswordAuthenticationFilter.class);
+                // 禁用默认的UsernamePasswordAuthenticationFilter，该默认过滤器器会拦截所有POST请求，并尝试进行身份验证
+                //.formLogin(AbstractHttpConfigurer::disable);
 
         return http.build();
     }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 
 import {ref} from "vue";
+import {login} from "@/api/login.js";
 
 const loading = ref(false)
 const loginRef = ref()
@@ -12,11 +13,22 @@ const loginForm = ref( {
 
 //登录方法
 const handleLogin = () => {
-  loginRef.value.validate(valid => {
+  loginRef.value.validate(async valid => {
     if( valid ){
       //打开加载首页
       loading.value = true
-      //调用登录方法 TODO
+      console.log(loginForm.value,'看看用户输入的用户名和密码')
+      try {
+        const response = await login(loginForm.value)
+        console.log('登录成功:', response)
+        loading.value = false
+      } catch (error) {
+        console.error('登录失败:', error)
+        console.error('错误响应:', error.response)
+        console.error('错误响应数据:', error.response?.data)
+        console.error('错误状态:', error.response?.status)
+        loading.value = false
+      }
     }
   })
 }

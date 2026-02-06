@@ -1,15 +1,13 @@
 package com.drone.system.controller;
 
 import com.drone.system.domain.AjaxResult;
+import com.drone.system.domain.LoginBody;
 import com.drone.system.domain.User;
 import com.drone.system.service.IUserService;
 import com.drone.system.utils.SecurityUtils;
 import jakarta.annotation.Resource;
 import org.apache.ibatis.annotations.Mapper;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -36,4 +34,10 @@ public class IndexController extends BaseController{
     public AjaxResult test(){
         return success(SecurityUtils.getLoginUser());
     }
+    
+    @GetMapping("/health")
+    public AjaxResult health(){
+        return success("服务正常运行");
+    }
+
 }
