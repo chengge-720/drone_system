@@ -15,7 +15,7 @@ export function login(data){
 export function getInfo(){
     return request({
         url:'/getInfo', //后端接口地址
-        method:'post',//请求方式: post(严格遵守后端路径)
+        method:'get',//请求方式: get(严格遵守后端路径)
     })
 }
 

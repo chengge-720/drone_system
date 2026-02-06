@@ -53,7 +53,7 @@ const useUserStore = defineStore(
                             }
                         }
                         //更新Store状态
-                        this.id = user.id
+                        this.id = user.userId
                         this.name = user.username
                         this.avatar = avatar
                         //返回结果

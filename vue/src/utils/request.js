@@ -33,6 +33,7 @@ const handleReLogin = () => {
         type: 'warning'}
      ).then(() => {//重新登录路径
         isReLogin.show = false
+        //清空用户登录信息
         useUserStore().logOut().then(() => {
             //退出后跳转登录页面
             location.href = '/login'

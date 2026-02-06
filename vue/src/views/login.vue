@@ -1,7 +1,8 @@
 <script setup lang="ts">
-
+import useUserStore from "@/stores/modules/userStore.js";
+import {useRouter} from "vue-router";
 import {ref} from "vue";
-import {login} from "@/api/login.js";
+import {login} from "@/api/login.js"
 
 const loading = ref(false)
 const loginRef = ref()
@@ -11,34 +12,35 @@ const loginForm = ref( {
   password: null
 })
 
-//登录方法
-const handleLogin = () => {
-  loginRef.value.validate(async valid => {
-    if( valid ){
-      //打开加载首页
-      loading.value = true
-      console.log(loginForm.value,'看看用户输入的用户名和密码')
-      try {
-        const response = await login(loginForm.value)
-        console.log('登录成功:', response)
-        loading.value = false
-      } catch (error) {
-        console.error('登录失败:', error)
-        console.error('错误响应:', error.response)
-        console.error('错误响应数据:', error.response?.data)
-        console.error('错误状态:', error.response?.status)
-        loading.value = false
-      }
-    }
-  })
-}
-
 //表单校验
 const rules = ref({
   userName: [{required: true, message: '请输入用户名', trigger: 'blur'}],
   password: [{required: true, message: '请输入密码！', trigger: 'blur'}],
 })
 
+//用户状态管理
+const userStore = useUserStore()
+
+const router = useRouter()
+
+//登录方法
+const handleLogin = () => {
+  loginRef.value.validate(valid => {
+    if( valid ){
+      //打开加载状态
+      loading.value = true
+      //调用登录方法
+      userStore.login(loginForm.value).then(res => {
+        //登录成功后，由路径守卫来跳转页面
+        const redirectPath = '/'
+        router.push(redirectPath)
+      }).catch(() => {
+        //关闭加载状态
+        loading.value = false
+      })
+    }
+  })
+}
 
 </script>
 
@@ -55,7 +57,7 @@ const rules = ref({
           <el-input v-model="loginForm.userName" size="large" placeholder="请输入用户名" />
         </el-form-item>
         <el-form-item prop="password">
-          <el-input v-model="loginForm.password" size="large" placeholder="请输入密码" />
+          <el-input show-password v-model="loginForm.password" size="large" placeholder="请输入密码" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" size="large" style="width: 100%" :loading="loading" @click="handleLogin">登录</el-button>
