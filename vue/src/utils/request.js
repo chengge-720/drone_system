@@ -1,6 +1,7 @@
 import axios from "axios";
 import {ElMessage , ElMessageBox} from "element-plus";
 import {getToken} from "@/utils/auth.js";
+import useUserStore from "@/stores/modules/userStore.js";
 
 /**
  * 全局设置
@@ -32,7 +33,12 @@ const handleReLogin = () => {
         type: 'warning'}
      ).then(() => {//重新登录路径
         isReLogin.show = false
-    }).catch(() => {//取消路径
+        useUserStore().logOut().then(() => {
+            //退出后跳转登录页面
+            location.href = '/login'
+        })
+    }).catch(() => {
+        //取消路径
         isReLogin.show = false
     })
 }

@@ -19,7 +19,7 @@ export function getInfo(){
     })
 }
 
-//登出方法
+//退出登录
 export function logout(){
     return request({
         url:'/logout', //后端接口地址
