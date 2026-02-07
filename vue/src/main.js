@@ -11,6 +11,10 @@ import App from './App.vue'
 import router from './router'
 //路由控制
 import './permission.js'
+//引入图标组件
+import SvgIcon from '@/components/SvgIcon/index.vue'
+import 'virtual:svg-icons-register'
+import '@/assets/styles/all.css'
 
 const app = createApp(App)
 
@@ -22,6 +26,7 @@ app.use(store)
 for(const [key, component] of Object.entries(ElementPlusIconsVue)){
     app.component(key, component)
 }
+app.component('svg-icon', SvgIcon)
 
 app.use(ElementPlus, {
     locale: zhCn,

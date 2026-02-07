@@ -1,0 +1,14 @@
+/**
+通用样式代码
+ */
+a{
+    text-decoration: none;
+}
+
+.app-container{
+    padding: 20px;
+}
+
+.mb8{
+    margin-bottom: 8px;
+}

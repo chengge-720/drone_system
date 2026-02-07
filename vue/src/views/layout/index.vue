@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div >
     <!--顶部导航栏-->
     <el-header style="background-color: #4d4fc8;height: 60px;display: flex;
     position: fixed;left: 0;right: 0;top:0;box-shadow:0 0 20px rgba(0,25,55,0.8);">
@@ -17,8 +17,9 @@
 
         <div style="display: flex;align-items: center;">
           <span style="margin-right: 15px;color: white">你好：{{ userStore.name }}</span>
-          <el-button type="text" @click="logout" style="display: flex;padding: 0 20px;">
-            <span>退出登录</span>
+          <el-button type="text" @click="logout" style="display: flex;margin: 10px 20px;">
+            <svg-icon icon-class="logout"/>
+            <span style="color: #d6c571">退出登录</span>
           </el-button>
           <el-dropdown trigger="click" style="cursor: pointer">
             <div>
@@ -51,6 +52,7 @@ import {RouteLocation, RouteLocationMatched, useRoute} from "vue-router";
 import useUserStore from "@/stores/modules/userStore.js";
 import {ElMessageBox ,ElMessage} from "element-plus";
 import {ArrowDown, ArrowDownBold} from "@element-plus/icons-vue";
+
 //面包屑数组
 const breadItems = ref([])
 
