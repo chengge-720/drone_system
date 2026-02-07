@@ -39,7 +39,7 @@ public class RegisterController extends BaseController{
         if(regFlag){
             return success("注册成功！");
         }else{
-            return error("注册失败！");
+            return error("注册失败！用户名已存在！");
         }
 
     }

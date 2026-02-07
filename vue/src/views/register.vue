@@ -45,7 +45,7 @@ const handleRegister = () => {
         router.push('/login')
       }).catch(()=>{
         loading.value = false
-        ElMessage.error("注册失败！")
+        ElMessage.error("注册失败！用户名已存在！")
       })
     }
   })

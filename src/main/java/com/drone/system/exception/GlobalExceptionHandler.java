@@ -1,4 +1,4 @@
-package com.drone.system.configure;
+package com.drone.system.exception;
 
 import com.drone.system.domain.AjaxResult;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +23,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(RuntimeException.class)
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     public AjaxResult handleRuntimeException(RuntimeException e) {
+        log.info("运行时异常",e);
         log.error("RuntimeException: {}", e.getMessage(), e);
         return AjaxResult.error(e.getMessage());
     }
@@ -35,6 +36,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public AjaxResult handleException(Exception e) {
+        log.info("系统异常",e);
         log.error("Exception: {}", e.getMessage(), e);
         return AjaxResult.error("服务器内部错误");
     }
