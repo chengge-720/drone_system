@@ -20,6 +20,21 @@
           <el-button type="text" @click="logout" style="display: flex;padding: 0 20px;">
             <span>退出登录</span>
           </el-button>
+          <el-dropdown trigger="click" style="cursor: pointer">
+            <div>
+              <img :src="userStore.avatar" alt="" style="height: 36px;width: 36px;border-radius: 50%;">
+                <el-icon class="el-icon--right">
+                  <arrow-down/>
+                </el-icon>
+            </div>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <router-link to="/user/profile" style="text-decoration: none">
+                <el-dropdown-item>个人中心</el-dropdown-item>
+                </router-link>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
 
         </div>
 
@@ -35,6 +50,7 @@ import {onMounted, ref, watch} from 'vue';
 import {RouteLocation, RouteLocationMatched, useRoute} from "vue-router";
 import useUserStore from "@/stores/modules/userStore.js";
 import {ElMessageBox ,ElMessage} from "element-plus";
+import {ArrowDown, ArrowDownBold} from "@element-plus/icons-vue";
 //面包屑数组
 const breadItems = ref([])
 
