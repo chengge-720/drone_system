@@ -15,6 +15,7 @@
         <result property="password" column="password"/>
         <result property="createTime" column="create_time"/>
     </resultMap>
+
     <!--以下两种定义方法相同-->
     <!--<select id="selectUserByUserName" resultType="User"></select> -->
     <!--根据用户名查询数据-->
@@ -29,4 +30,28 @@
         from user
         where user_id = #{userId}
     </select>
+
+    <!--新增用户-->
+    <!--
+        第一个trim标签，用于生成SQL语句的字段部分，
+        生成的字段：user_id,user_name,password
+    -->
+    <insert id="insertUser" parameterType="User">
+        insert into user
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="userId != null">user_id,</if>
+            <if test="userName != null and userName != ''">user_name,</if>
+            <if test="avatar != null and avatar != ''">avatar,</if>
+            <if test="sex != null">sex,</if>
+            <if test="password != null and password != ''">password,</if>
+        </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="userId != null">#{userId},</if>
+            <if test="userName != null and userName != ''">#{userName},</if>
+            <if test="avatar != null and avatar != ''">#{avatar},</if>
+            <if test="sex != null">#{sex},</if>
+            <if test="password != null and password != ''">#{password},</if>
+        </trim>
+
+    </insert>
 </mapper>

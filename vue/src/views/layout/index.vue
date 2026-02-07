@@ -22,7 +22,7 @@
             <span style="color: #d6c571">退出登录</span>
           </el-button>
           <el-dropdown trigger="click" style="cursor: pointer">
-            <div>
+            <div style="margin: 10px">
               <img :src="userStore.avatar" alt="" style="height: 36px;width: 36px;border-radius: 50%;">
                 <el-icon class="el-icon--right">
                   <arrow-down/>

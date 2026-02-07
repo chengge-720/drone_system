@@ -15,4 +15,11 @@ public interface IUserService {
      * @return
      */
     User selectUserByUserId(Long userId);
+
+    /**
+     * 注册用户
+     * @param newUser
+     * @return
+     */
+    boolean registerUser(User newUser);
 }
