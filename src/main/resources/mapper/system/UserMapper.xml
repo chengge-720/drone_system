@@ -52,6 +52,13 @@
             <if test="sex != null">#{sex},</if>
             <if test="password != null and password != ''">#{password},</if>
         </trim>
-
     </insert>
+
+    <!--更新用户头像-->
+    <update id="updateUserAvatar" parameterType="User">
+        update user
+        set avatar = #{avatar}
+        where user_id = #{userId}
+    </update>
+
 </mapper>

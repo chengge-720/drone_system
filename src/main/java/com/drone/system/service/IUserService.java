@@ -22,4 +22,12 @@ public interface IUserService {
      * @return
      */
     boolean registerUser(User newUser);
+
+    /**
+     * 更新用户头像
+     * @param userId
+     * @param avatar
+     * @return
+     */
+    int updateUserAvatar(Long userId, String avatar);
 }

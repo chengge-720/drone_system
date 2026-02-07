@@ -33,4 +33,9 @@ public class UserServiceImpl implements IUserService {
         //如果用户不存在，新增用户
         return userMapper.insertUser(newUser)>0;
     }
+
+    @Override
+    public int updateUserAvatar(Long userId, String avatar) {
+        return userMapper.updateUserAvatar(userId,avatar);
+    }
 }
