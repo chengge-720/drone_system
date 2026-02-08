@@ -23,13 +23,29 @@ export const constantRouters = [
   {
     path: '/',
     component: Layout,
-    redirect: 'index',
+    redirect: '/index',
     children: [
       {
-        path: 'index',
+        path: '/index',
         name: 'Index',
         meta: {
-          title: '首页',}
+          title: '首页'
+        }
+      },
+    ]
+  },
+  {
+    path: '/user',
+    component: Layout,
+    hidden: true,
+    children: [
+      {
+        path: 'profile',
+        name: 'Profile',
+        component: () => import('@/views/system/user/profile.vue'),
+        meta: {
+          title: '个人中心'
+        }
       },
     ]
   },

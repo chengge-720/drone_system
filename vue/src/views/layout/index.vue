@@ -42,6 +42,12 @@
       </div>
 
     </el-header>
+
+    <!--主内容区域-->
+    <main style="margin-left: 240px;position: relative;top: 60px;">
+      <AppMain />
+    </main>
+
   </div>
 </template>
 
@@ -52,7 +58,8 @@ import {RouteLocation, RouteLocationMatched, useRoute} from "vue-router";
 import useUserStore from "@/stores/modules/userStore.js";
 import {ElMessageBox ,ElMessage} from "element-plus";
 import {ArrowDown, ArrowDownBold} from "@element-plus/icons-vue";
-
+import AppMain from "@/views/layout/components/AppMain.vue";
+import SvgIcon from "@/components/SvgIcon/index.vue";
 //面包屑数组
 const breadItems = ref([])
 
