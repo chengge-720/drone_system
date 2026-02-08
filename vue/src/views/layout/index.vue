@@ -11,7 +11,9 @@
       <div style="flex: 1;display: flex;margin: 20px">
         <el-breadcrumb separator="/" style="display: flex;align-items: center;flex: 1;">
           <el-breadcrumb-item v-for="(item, index) in breadItems" :key="index">
+            <!--
             <span style="color: white">{{ item.meta.title }}</span>
+            -->
           </el-breadcrumb-item>
         </el-breadcrumb>
 
@@ -44,7 +46,7 @@
     </el-header>
 
     <!--主内容区域-->
-    <main style="margin-left: 240px;position: relative;top: 60px;">
+    <main style="margin-left: 240px;position: relative;top: 60px;border: #007ddd 1px solid;border-radius: 10px">
       <AppMain />
     </main>
 

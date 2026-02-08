@@ -15,6 +15,9 @@ import './permission.js'
 import SvgIcon from '@/components/SvgIcon/index.vue'
 import 'virtual:svg-icons-register'
 import '@/assets/styles/all.css'
+// 引入表格组件
+import VxeUIBase from 'vxe-pc-ui'
+import 'vxe-pc-ui/es/style.css'
 
 const app = createApp(App)
 
@@ -22,6 +25,7 @@ app.use(createPinia())
 app.use(router)
 app.use(ElementPlus)
 app.use(store)
+app.use(VxeUIBase)
 
 for(const [key, component] of Object.entries(ElementPlusIconsVue)){
     app.component(key, component)

@@ -1,7 +1,8 @@
-
 <template>
   <div style="text-align: center;margin: 20px auto;max-width: 500px;">
-    <div >
+    <h2>用户个人中心</h2>
+    <!-- 头像上传区域 -->
+    <div>
       <el-upload
           class="avatar-uploader"
           :action="uploadUrl"
@@ -14,6 +15,7 @@
       </el-upload>
     </div>
 
+    <!-- 用户信息列表 -->
     <ul class="list-group" style="display: inline-block;text-align: left;width: 100%;max-width: 300px">
       <li class="list-group-item">
         名称
@@ -25,40 +27,106 @@
         <div class="pull-right" v-if="state.user.sex === 0">男</div>
         <div class="pull-right" v-else>女</div>
       </li>
-
     </ul>
 
+    <!-- 操作按钮 -->
     <div style="margin-top: 20px">
-      <el-button type="primary" @click="">修改信息</el-button>
-      <el-button type="primary" @click="">修改密码</el-button>
+      <el-button type="primary" @click="editUserInfo">修改信息</el-button>
+      <el-button type="primary" @click="changePassword">修改密码</el-button>
     </div>
-  </div>
+    <!-- Vue状态管理框 -->
+    <vxe-modal title="修改用户信息" width="500px" v-model="userInfoOpen" showFooter show-maximize resize>
+      <el-form ref="userRef" :model="form" :rules="rules" label-width="80px">
+        <el-form-item label="用户名" prop="userName">
+          <el-input v-model="form.userName" />
+        </el-form-item>
+        <el-form-item label="性别" prop="sex">
+          <el-radio-group v-model="form.sex">
+            <el-radio :label="0">男</el-radio>
+            <el-radio :label="1">女</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <div>
+          <el-button type="primary" @click="">保存</el-button>
+          <el-button @click="userInfoOpen = false">取消</el-button>
+        </div>
+      </template>
+    </vxe-modal>
 
+
+  </div>
 </template>
 
 <script setup>
-
+import { ref, reactive, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import useUserStore from "@/stores/modules/userStore.js";
-import {onMounted, reactive} from "vue";
-import {getInfo} from "@/api/login.js";
-import {getToken} from "@/utils/auth.js";
-import {ElMessage} from "element-plus";
+import { getInfo } from "@/api/login.js";
+import { getToken } from "@/utils/auth.js";
+import {VxeModal} from 'vxe-pc-ui'
 
-//后端头像上传接口
-const uploadUrl = import.meta.env.VITE_APP_BASE_API + "/system/user/profile/avatar"
-
-//请求头
-const headers = {"Authorization": "Bearer " + getToken()}
-
-//用户信息
+// 响应式数据
+const userInfoOpen = ref(false)
+const passwordDialogVisible = ref(false)
 const userStore = useUserStore()
-//数据状态
-const state = reactive( {
-  user:{}
+
+const userRef = ref()
+//用户资料表单参数
+const form = ref({})
+//表单校验
+const rules = ref({
+  userName:[{ required: true, message: '请输入用户名', trigger: 'blur'}],
 })
 
-//上传前处理
-const beforeUpload = (file) =>{
+
+const passwordForm = reactive({
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: ''
+})
+
+const state = reactive({
+  user: {}
+})
+
+// 后端配置
+const uploadUrl = import.meta.env.VITE_APP_BASE_API + "/system/user/profile/avatar"
+const headers = {"Authorization": "Bearer " + getToken()}
+
+// 主要功能方法
+const editUserInfo = () => {
+  userInfoOpen.value = true
+}
+
+const saveUserInfo = () => {
+  console.log('保存用户信息:', editForm)
+  // 这里可以添加实际的保存逻辑
+  ElMessage.success('信息保存成功！')
+  userInfoOpen.value = false
+}
+
+const changePassword = () => {
+  passwordDialogVisible.value = true
+}
+
+const savePassword = () => {
+  // 密码验证逻辑
+  if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+    ElMessage.error('两次输入的密码不一致！')
+    return
+  }
+  ElMessage.success('密码修改成功！')
+  passwordDialogVisible.value = false
+  // 重置表单
+  passwordForm.oldPassword = ''
+  passwordForm.newPassword = ''
+  passwordForm.confirmPassword = ''
+}
+
+// 上传相关方法
+const beforeUpload = (file) => {
   const isJPG = file.type === 'image/jpeg' || file.type === 'image/png'
   if (!isJPG) {
     ElMessage.error('上传头像图片只能是 JPG 格式!')
@@ -66,8 +134,7 @@ const beforeUpload = (file) =>{
   return isJPG;
 }
 
-//处理上传成功
-const handleAvatarSuccess = (res, file) =>{
+const handleAvatarSuccess = (res, file) => {
   if(res.code === 200){
     ElMessage.success("上传成功！")
     userStore.avatar = import.meta.env.VITE_APP_BASE_API + res.imgUrl
@@ -76,22 +143,24 @@ const handleAvatarSuccess = (res, file) =>{
   }
 }
 
-//处理上传失败
-const handleAvatarError = () =>{
+const handleAvatarError = () => {
   ElMessage.error("上传失败！")
 }
 
-//读取用户信息
-const getUser =  () =>{
-  getInfo().then(res =>{
+// 获取用户信息
+const getUser = () => {
+  getInfo().then(res => {
     state.user = res.data
+    console.log('获取到用户数据:', state.user)
+  }).catch(error => {
+    console.error('获取用户信息失败:', error)
   })
 }
 
-onMounted(()=>{
+// 组件挂载时获取用户信息
+onMounted(() => {
   getUser()
 })
-
 </script>
 
 <style scoped>
@@ -112,5 +181,10 @@ onMounted(()=>{
   height: 100px;
   display: block;
   border-radius: 20px;
+}
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>
