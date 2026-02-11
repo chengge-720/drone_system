@@ -25,4 +25,6 @@ public interface UserMapper {
     int updateUserAvatar(Long userId, String avatar);
 
     int updateUser(User user);
+
+    int resetUserPwd(Long userId, String newPassword);
 }

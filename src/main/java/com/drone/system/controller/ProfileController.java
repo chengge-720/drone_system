@@ -3,6 +3,7 @@ package com.drone.system.controller;
 import com.drone.system.config.droneConfig;
 import com.drone.system.domain.AjaxResult;
 import com.drone.system.domain.LoginUser;
+import com.drone.system.domain.SubmitPwdBody;
 import com.drone.system.domain.User;
 import com.drone.system.service.IUserService;
 import com.drone.system.utils.SecurityUtils;
@@ -101,6 +102,36 @@ public class ProfileController extends BaseController{
         currentUser.setSex(user.getSex());
 
         return toAjax(userService.updateUser(currentUser));
+    }
+
+    /**
+     * 修改密码
+     */
+    @PutMapping("/updatePwd")
+    public AjaxResult updatePwd(@RequestBody SubmitPwdBody submitPwdBody) {
+        //修改用户密码
+        String oldPassword =  submitPwdBody.getOldPassword();
+        String newPassword =  submitPwdBody.getNewPassword();
+        //获取尚未修改前的登录用户信息
+        LoginUser loginUser = SecurityUtils.getLoginUser();
+        User user = loginUser.getUser();
+        //用户修改之前的
+        String password = user.getPassword();
+        //判断新密码是否与旧密码相同
+        if(newPassword.equals(password)){
+            return error("新密码不能与原密码相同！请重新输入！");
+        }
+        //判断输入的旧密码是否正确
+        if(!oldPassword.equals(password)){
+            return error("原密码错误！请重新输入！");
+        }
+        //更新用户密码
+        if(userService.resetUserPwd(user.getUserId(), newPassword)>0){
+            //密码修改成功，需要重新登录
+            loginUser.getUser().setPassword(newPassword);
+            return success("修改密码成功！");
+        }
+        return error("修改密码失败！");
     }
 
 }

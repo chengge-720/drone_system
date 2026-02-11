@@ -72,4 +72,11 @@
         where user_id = #{userId}
     </update>
 
+    <!--更新用户密码-->
+    <update id="resetUserPwd" parameterType="User">
+        update user
+        set password = #{newPassword}
+        where user_id = #{userId}
+    </update>
+
 </mapper>

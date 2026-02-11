@@ -37,4 +37,12 @@ public interface IUserService {
      * @return
      */
     int updateUser(User user);
+
+    /**
+     * 修改用户密码
+     * @param userId
+     * @param newPassword
+     * @return
+     */
+    int resetUserPwd(Long userId, String newPassword);
 }
