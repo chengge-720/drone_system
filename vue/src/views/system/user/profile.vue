@@ -48,8 +48,8 @@
         </el-form-item>
       </el-form>
       <template #footer>
-        <div>
-          <el-button type="primary" @click="">保存</el-button>
+        <div style="text-align: center">
+          <el-button type="primary" @click="submitUserInfo">保存</el-button>
           <el-button @click="userInfoOpen = false">取消</el-button>
         </div>
       </template>
@@ -60,12 +60,13 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import {ref, reactive, onMounted, watch} from 'vue'
 import { ElMessage } from 'element-plus'
 import useUserStore from "@/stores/modules/userStore.js";
 import { getInfo } from "@/api/login.js";
 import { getToken } from "@/utils/auth.js";
 import {VxeModal} from 'vxe-pc-ui'
+import {updateProfile} from "@/api/system/user.js";
 
 // 响应式数据
 const userInfoOpen = ref(false)
@@ -80,6 +81,20 @@ const rules = ref({
   userName:[{ required: true, message: '请输入用户名', trigger: 'blur'}],
 })
 
+//提交用户信息
+const submitUserInfo = () => {
+  userRef.value.validate(valid => {
+    if( valid ){
+      updateProfile(form.value).then(res => {
+        userInfoOpen.value = false
+        ElMessage.success("修改成功！")
+        getUser()//刷新用户信息
+        userStore.name = form.value.userName
+      })
+      //userInfoOpen.value = false
+    }
+  })
+}
 
 const passwordForm = reactive({
   oldPassword: '',
@@ -100,12 +115,6 @@ const editUserInfo = () => {
   userInfoOpen.value = true
 }
 
-const saveUserInfo = () => {
-  console.log('保存用户信息:', editForm)
-  // 这里可以添加实际的保存逻辑
-  ElMessage.success('信息保存成功！')
-  userInfoOpen.value = false
-}
 
 const changePassword = () => {
   passwordDialogVisible.value = true
@@ -151,6 +160,11 @@ const handleAvatarError = () => {
 const getUser = () => {
   getInfo().then(res => {
     state.user = res.data
+    //初始化表单参数
+    form.value = {
+      userName: res.data.userName,
+      sex: res.data.sex
+    }
     console.log('获取到用户数据:', state.user)
   }).catch(error => {
     console.error('获取用户信息失败:', error)
@@ -161,6 +175,16 @@ const getUser = () => {
 onMounted(() => {
   getUser()
 })
+
+//监听表单
+watch(() => state.user,
+    user => {
+      if(user){
+        form.value = {userName: user.userName, sex: user.sex}
+      }
+    },
+    {immediate: true}
+)
 </script>
 
 <style scoped>

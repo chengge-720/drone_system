@@ -23,4 +23,6 @@ public interface UserMapper {
     int insertUser(User user);
 
     int updateUserAvatar(Long userId, String avatar);
+
+    int updateUser(User user);
 }
