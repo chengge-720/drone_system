@@ -75,7 +75,7 @@ const resolvePath = (routePath) => {
   <div v-if="!item.hidden">
     <!-- 当前菜单项只需要显示一个子项 -->
     <template v-if="shouldShowSingleItem">
-      <app-link to="singleItemPath">
+      <app-link :to="singleItemPath">
         <el-menu-item :index="singleItemPath">
           <svg-icon :icon-class="onlyOneChild.meta.icon || (item.meta && item.meta.icon)"
                     style="margin-right: 10px"/>

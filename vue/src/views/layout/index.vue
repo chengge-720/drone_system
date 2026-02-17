@@ -46,9 +46,14 @@
     </el-header>
 
     <!--主内容区域-->
-    <main style="margin-left: 240px;position: relative;top: 60px;border: #007ddd 1px solid;border-radius: 10px">
+    <main style="margin-left: 240px;position: relative;top: 60px;border: #007ddd">
       <AppMain />
     </main>
+
+    <!--侧边栏-->
+    <el-aside style="width: 240px;position: fixed;top: 65px;bottom: 0;border-radius: 5px">
+      <SideBar/>
+    </el-aside>
 
   </div>
 </template>
@@ -62,6 +67,8 @@ import {ElMessageBox ,ElMessage} from "element-plus";
 import {ArrowDown, ArrowDownBold} from "@element-plus/icons-vue";
 import AppMain from "@/views/layout/components/AppMain.vue";
 import SvgIcon from "@/components/SvgIcon/index.vue";
+import SideBar from './components/Sidebar/index.vue';
+
 //面包屑数组
 const breadItems = ref([])
 

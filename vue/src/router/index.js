@@ -27,10 +27,29 @@ export const constantRouters = [
     children: [
       {
         path: '/index',
+        component: () => import('@/views/system/index.vue'),
         name: 'Index',
         meta: {
           title: '首页'
         }
+      },
+    ]
+  },
+  {
+    path: '/system',
+    component: Layout,
+    children: [
+      {
+        path: 'user',
+        component: () => import('@/views/system/user/index.vue'),
+      },
+      {
+        path: 'role',
+        component: () => import('@/views/system/role/index.vue'),
+      },
+      {
+        path: 'menu',
+        component: () => import('@/views/system/menu/index.vue'),
       },
     ]
   },
