@@ -7,6 +7,8 @@ import com.drone.system.service.IUserService;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Service
 public class UserServiceImpl implements IUserService {
     @Resource
@@ -47,5 +49,10 @@ public class UserServiceImpl implements IUserService {
     @Override
     public int resetUserPwd(Long userId, String newPassword) {
         return userMapper.resetUserPwd(userId,newPassword);
+    }
+
+    @Override
+    public List<User> selectUserList(User user) {
+        return userMapper.selectUserList(user);
     }
 }

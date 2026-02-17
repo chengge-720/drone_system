@@ -1,11 +1,10 @@
 <script setup lang="ts">
 
-
 </script>
 
 <template>
   <div>
-    <h1>后台首页</h1>
+    <h1>无人机任务信息</h1>
   </div>
 </template>
 

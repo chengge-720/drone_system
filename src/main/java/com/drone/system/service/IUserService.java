@@ -2,6 +2,8 @@ package com.drone.system.service;
 
 import com.drone.system.domain.User;
 
+import java.util.List;
+
 /**
  * 用户Service接口
  */
@@ -45,4 +47,11 @@ public interface IUserService {
      * @return
      */
     int resetUserPwd(Long userId, String newPassword);
+
+    /**
+     * 获取用户列表
+     * @param user
+     * @return
+     */
+    List<User> selectUserList(User user);
 }

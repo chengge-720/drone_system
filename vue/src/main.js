@@ -23,7 +23,6 @@ const app = createApp(App)
 
 app.use(createPinia())
 app.use(router)
-app.use(ElementPlus)
 app.use(store)
 app.use(VxeUIBase)
 
@@ -32,6 +31,7 @@ for(const [key, component] of Object.entries(ElementPlusIconsVue)){
 }
 app.component('svg-icon', SvgIcon)
 
+//本地化配置，将框架组件语言设置为中文
 app.use(ElementPlus, {
     locale: zhCn,
 })

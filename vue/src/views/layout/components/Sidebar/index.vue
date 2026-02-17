@@ -30,6 +30,24 @@ const sidebarRouters = ref( [
         },
     ]
   },
+  {
+    path: '/droneInfo',
+    meta: { title: '无人机管理' ,icon: '无人机管理',hidden: false},
+    children:[
+        {
+          path: 'baseInfo',
+          meta: { title: '基础信息' ,icon: '基础信息管理',hidden: false}
+        },
+        {
+          path: 'flightInfo',
+          meta: { title: '飞行信息' ,icon: '飞行信息管理',hidden: false}
+        },
+        {
+          path: 'taskInfo',
+          meta: { title: '任务信息' ,icon: '任务信息',hidden: false}
+        }
+    ]
+  },
 
 ])
 

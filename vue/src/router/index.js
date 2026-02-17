@@ -54,6 +54,24 @@ export const constantRouters = [
     ]
   },
   {
+    path: '/droneInfo',
+    component: Layout,
+    children: [
+      {
+        path: 'baseInfo',
+        component: () => import('@/views/droneInfo/baseInfo/index.vue'),
+      },
+      {
+        path: 'flightInfo',
+        component: () => import('@/views/droneInfo/flightInfo/index.vue'),
+      },
+      {
+        path: 'taskInfo',
+        component: () => import('@/views/droneInfo/taskInfo/index.vue'),
+      },
+    ]
+  },
+  {
     path: '/user',
     component: Layout,
     hidden: true,

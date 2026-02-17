@@ -50,3 +50,12 @@ token:
   secret: dwanifnkalkfnjknskzncoinwqijidnkzclknjfbfnaknfjdjfnajknefndjjnvjksnfwdasjkbfawknjfsnjf
   #lin pai you xiao qi
   expireTime: 300
+
+#PageHeleper
+pagehelper:
+  #shu ju ku fang yan , zhi ding wei mysql
+  helperDialect: mysql
+  #zhi chi fang fa can shu
+  support-methods-arguments: true
+  #shi yong count cha xun huo qu de shu ju zon shu
+  params: count=countSql

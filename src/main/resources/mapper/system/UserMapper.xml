@@ -24,11 +24,26 @@
         from user
         where user_name = #{userName}
     </select>
+
     <!--通过用户Id查询用户信息-->
     <select id="selectUserByUserId" resultMap="UserResult" parameterType="Long">
         select user_id, user_name, sex, avatar, password, create_time
         from user
         where user_id = #{userId}
+    </select>
+
+    <!--查询用户列表-->
+    <select id="selectUserList" resultMap="UserResult">
+        select user_id, user_name, sex, avatar, password, create_time
+        from user
+        <where>
+            <if test="userId != null">
+                and user_id = #{userId}
+            </if>
+            <if test="userName != null and userName != ''">
+                and user_name like concat('%',#{userName},'%')
+            </if>
+        </where>
     </select>
 
     <!--新增用户-->
