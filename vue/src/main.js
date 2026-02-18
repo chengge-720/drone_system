@@ -19,6 +19,9 @@ import '@/assets/styles/all.css'
 import VxeUIBase from 'vxe-pc-ui'
 import 'vxe-pc-ui/es/style.css'
 
+//分页组件
+import Pagination from '@/components/Pagination/index.vue'
+
 const app = createApp(App)
 
 app.use(createPinia())
@@ -29,6 +32,10 @@ app.use(VxeUIBase)
 for(const [key, component] of Object.entries(ElementPlusIconsVue)){
     app.component(key, component)
 }
+
+//分页组件
+app.component('pagination', Pagination)
+
 app.component('svg-icon', SvgIcon)
 
 //本地化配置，将框架组件语言设置为中文

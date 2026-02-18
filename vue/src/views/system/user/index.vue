@@ -5,6 +5,7 @@ import {selectUserList} from "@/api/system/user.js";
 
 //用户默认头像
 import defaultAvatar from '@/assets/images/profile.jpg'
+import Pagination from "@/components/Pagination/index.vue";
 
 const baseUrl = import.meta.env.VITE_APP_BASE_API
 
@@ -29,18 +30,6 @@ const multiple = ref(true);
 
 //数据总数
 const total = ref(0);
-
-//分页大小改变
-const handleSizeChange = (val) => {
-  query.value.pageSize = val
-  getList()
-}
-
-//分页页码改变
-const handleCurrentChange = (val) => {
-  query.value.pageNum = val
-  getList()
-}
 
 //查询数据
 const getList = ()=>{
@@ -137,15 +126,12 @@ onMounted(()=>{
       </el-table-column>
     </el-table>
 
+
     <!-- 分页 -->
-    <el-pagination layout="total, prev, pager, next, jumper, sizes"
-      :total="total"
-      :current-page="query.pageNum"
-      :page-size="query.pageSize"
-      :page-sizes="[2,5,10,20]"
-      style="margin-top: 8px;"
-      @size-change="handleSizeChange"
-      @current-change="handleCurrentChange"
+    <pagination :total="total"
+                v-model:page="query.pageNum"
+                v-model:limit="query.pageSize"
+                @pagination="getList"
     />
 
   </div>
