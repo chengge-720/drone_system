@@ -94,4 +94,13 @@
         where user_id = #{userId}
     </update>
 
+    <!--删除用户-->
+    <delete id="deleteUserByUserIds" parameterType="Long">
+        delete from user
+        where user_id in
+        <foreach collection="array" item="userId" open="(" separator="," close=")">
+            #{userId}
+        </foreach>
+    </delete>
+
 </mapper>

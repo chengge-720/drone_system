@@ -53,4 +53,6 @@ public interface UserMapper {
      * @return
      */
     List<User> selectUserList(User user);
+
+    int deleteUserByUserIds(Long[] userIds);
 }

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 
 import {onMounted, ref} from "vue";
-import {selectUserList, insertUser, selectUserByUserId, updateUser} from "@/api/system/user.js";
+import {selectUserList, insertUser, selectUserByUserId, updateUser, deleteUserByUserIds} from "@/api/system/user.js";
 
 //用户默认头像
 import defaultAvatar from '@/assets/images/profile.jpg'
 import Pagination from "@/components/Pagination/index.vue";
 import {validators, VxeModal} from "vxe-pc-ui";
-import {ElMessage} from "element-plus";
+import {ElMessage, ElMessageBox} from "element-plus";
 
 //表单实例
 const userRef = ref()
@@ -56,6 +56,29 @@ const handleUpdate = (row) => {
     open.value = true
     title.value = '修改用户'
   })
+}
+
+//删除按钮
+const handleDelete = (row) => {
+  const userIds = row.userId || ids.value
+  ElMessageBox.confirm(
+      '是否删除该用户?',
+      '删除',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+      .then(() => {
+        //删除,调用删除api
+        deleteUserByUserIds(userIds).then(res => {
+          if(res.code === 200){
+            ElMessage.success('删除成功')
+            getList()
+          }
+        })
+      })
 }
 
 //保存按钮
@@ -159,8 +182,7 @@ onMounted(()=>{
             <!--顶部按钮-->
             <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
             <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate">修改</el-button>
-            <el-button type="danger" icon="Delete" @click="">批量删除</el-button>
-
+            <el-button :disabled="multiple" type="danger" icon="Delete" @click="handleDelete">批量删除</el-button>
       </el-form-item>
     </el-form>
 
@@ -200,7 +222,7 @@ onMounted(()=>{
       <el-table-column label="操作" align="center" width="180">
         <template #default="scope">
           <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
-          <el-button link type="danger" icon="Delete" @click="">删除</el-button>
+          <el-button link type="danger" icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

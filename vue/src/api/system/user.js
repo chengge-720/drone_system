@@ -56,3 +56,12 @@ export function updateUser(data){
         data: data
     })
 }
+
+//删除用户
+export function deleteUserByUserIds(userIds){
+    return request({
+        url:"/system/user/deleteUserByUserIds/" + userIds,
+        method:"delete",
+    })
+}
+

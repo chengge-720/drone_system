@@ -61,4 +61,11 @@ public interface IUserService {
      * @return
      */
     int insertUser(User user);
+
+     /**
+     * 删除用户
+     * @param userIds
+     * @return
+     */
+    int deleteUserByUserIds(Long[] userIds);
 }
