@@ -1,12 +1,74 @@
 <script setup lang="ts">
 
 import {onMounted, ref} from "vue";
-import {selectUserList} from "@/api/system/user.js";
+import {selectUserList, insertUser} from "@/api/system/user.js";
 
 //用户默认头像
 import defaultAvatar from '@/assets/images/profile.jpg'
 import Pagination from "@/components/Pagination/index.vue";
+import {validators, VxeModal} from "vxe-pc-ui";
+import {ElMessage} from "element-plus";
 
+//表单实例
+const userRef = ref()
+
+//表单title
+const title = ref('');
+
+//对话框是否打开
+const open = ref(false);
+
+//表单参数
+const form = ref({
+  userId: null,
+  userName: null,
+  sex: null,
+  password: null,
+})
+
+//表单验证规则
+const rules = {
+  userName: [
+    {required: true, message: '请输入用户名', trigger: 'blur'},
+  ],
+  password: [
+    {required: true, message: '请输入密码', trigger: 'blur'},
+  ],
+}
+
+//新增按钮
+const handleInsert = ()=>{
+  form.value = {
+    userId: null,
+    userName: null,
+    sex: null,
+    password: null,
+  }
+  open.value = true
+  title.value = '添加用户'
+}
+
+//保存按钮
+const submitForm = () => {
+  userRef.value.validate(valid => {
+    if (valid) {
+      if(form.value.userId != null){
+        //修改
+      }else{
+        //新增,调用新增api
+        insertUser(form.value).then(res => {
+          if(res.code === 200){
+            ElMessage.success('新增成功')
+            open.value = false
+            getList()
+          }
+        })
+      }
+      }
+  })
+}
+
+//后端路径
 const baseUrl = import.meta.env.VITE_APP_BASE_API
 
 //顶部查询表单实例
@@ -62,7 +124,7 @@ const resetQuery = () => {
 }
 
 onMounted(()=>{
-  getList();
+  getList()
 })
 
 </script>
@@ -78,7 +140,7 @@ onMounted(()=>{
         <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
         <el-button icon="Refresh" @click="resetQuery">清空</el-button>
             <!--新增按钮-->
-            <el-button type="primary" icon="Plus" @click="">新增</el-button>
+            <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
             <el-button type="success" icon="Edit" @click="">修改</el-button>
             <el-button type="danger" icon="Delete" @click="">批量删除</el-button>
 
@@ -133,6 +195,30 @@ onMounted(()=>{
                 v-model:limit="query.pageSize"
                 @pagination="getList"
     />
+
+    <!-- 添加用户管理框 -->
+    <vxe-modal :title="title" width="500px" v-model="open" showFooter show-maximize resize>
+      <el-form ref="userRef" :model="form" :rules="rules" label-width="80px">
+        <el-form-item label="用户名" prop="userName">
+          <el-input v-model="form.userName" placeholder="请输入用户名" />
+        </el-form-item>
+        <el-form-item label="性别" prop="sex">
+          <el-radio-group v-model="form.sex">
+            <el-radio :label="0">男</el-radio>
+            <el-radio :label="1">女</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="密码" prop="password">
+          <el-input v-model="form.password" placeholder="请输入密码" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <div style="text-align: center">
+          <el-button type="primary" @click="submitForm">保存</el-button>
+          <el-button @click="userInfoOpen = false">取消</el-button>
+        </div>
+      </template>
+    </vxe-modal>
 
   </div>
 </template>

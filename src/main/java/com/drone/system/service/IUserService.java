@@ -54,4 +54,11 @@ public interface IUserService {
      * @return
      */
     List<User> selectUserList(User user);
+
+    /**
+     * 新增用户
+     * @param user 表单参数
+     * @return
+     */
+    int insertUser(User user);
 }

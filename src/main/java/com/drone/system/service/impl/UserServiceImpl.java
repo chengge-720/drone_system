@@ -55,4 +55,9 @@ public class UserServiceImpl implements IUserService {
     public List<User> selectUserList(User user) {
         return userMapper.selectUserList(user);
     }
+
+    @Override
+    public int insertUser(User user) {
+        return userMapper.insertUser(user);
+    }
 }

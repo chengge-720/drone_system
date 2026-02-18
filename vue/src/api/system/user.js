@@ -1,5 +1,5 @@
 import request from "@/utils/request.js";
-//设置个用户操作方法接口API
+//设置个用户操作方法接口API，这是连接后端方法和前端使用的“桥梁”
 
 //修改个人信息
 export function updateProfile(data){
@@ -28,5 +28,14 @@ export function selectUserList(query){
         url:"/system/user/selectUserList",
         method:"get",
         params: query
+    })
+}
+
+//新增用户
+export function insertUser(data){
+    return request({
+        url:"/system/user/insertUser",
+        method:"post",
+        data: data
     })
 }
