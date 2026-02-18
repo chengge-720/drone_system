@@ -31,6 +31,14 @@ export function selectUserList(query){
     })
 }
 
+//查询用户详情
+export function selectUserById(userId){
+    return request({
+        url:"/system/user/selectUserById/" + userId,
+        method:"get",
+    })
+}
+
 //新增用户
 export function insertUser(data){
     return request({

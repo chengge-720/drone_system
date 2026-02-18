@@ -30,11 +30,22 @@ public class UserController extends BaseController {
     }
 
     /**
+     * 根据用户ID查询用户
+     */
+    @GetMapping("/selectUserByUserId/{userId}")
+    public AjaxResult selectUserByUserId(@PathVariable Long userId) {
+        User user = userService.selectUserByUserId(userId);
+        return success(user);
+    }
+
+    /**
      * 新增用户
      */
     @PostMapping("/insertUser")
     public AjaxResult insertUser(@RequestBody User user) {
         return toAjax(userService.insertUser(user));
     }
+
+
 
 }

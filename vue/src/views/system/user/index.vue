@@ -125,6 +125,8 @@ const resetQuery = () => {
 
 onMounted(()=>{
   getList()
+
+
 })
 
 </script>
