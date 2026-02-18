@@ -1,7 +1,7 @@
 <script setup lang="ts">
 
 import {onMounted, ref} from "vue";
-import {selectUserList, insertUser} from "@/api/system/user.js";
+import {selectUserList, insertUser, selectUserByUserId, updateUser} from "@/api/system/user.js";
 
 //用户默认头像
 import defaultAvatar from '@/assets/images/profile.jpg'
@@ -48,12 +48,29 @@ const handleInsert = ()=>{
   title.value = '添加用户'
 }
 
+//修改按钮
+const handleUpdate = (row) => {
+  const userId = row.userId || ids.value
+  selectUserByUserId(userId).then(res => {
+    form.value = res.data
+    open.value = true
+    title.value = '修改用户'
+  })
+}
+
 //保存按钮
 const submitForm = () => {
   userRef.value.validate(valid => {
     if (valid) {
       if(form.value.userId != null){
-        //修改
+        //修改,调用修改api
+        updateUser(form.value).then(res => {
+          if(res.code === 200){
+            ElMessage.success('修改成功')
+            open.value = false
+            getList()
+          }
+        })
       }else{
         //新增,调用新增api
         insertUser(form.value).then(res => {
@@ -125,8 +142,6 @@ const resetQuery = () => {
 
 onMounted(()=>{
   getList()
-
-
 })
 
 </script>
@@ -141,9 +156,9 @@ onMounted(()=>{
       <el-form-item>
         <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
         <el-button icon="Refresh" @click="resetQuery">清空</el-button>
-            <!--新增按钮-->
+            <!--顶部按钮-->
             <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
-            <el-button type="success" icon="Edit" @click="">修改</el-button>
+            <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate">修改</el-button>
             <el-button type="danger" icon="Delete" @click="">批量删除</el-button>
 
       </el-form-item>
@@ -184,7 +199,7 @@ onMounted(()=>{
       </el-table-column>
       <el-table-column label="操作" align="center" width="180">
         <template #default="scope">
-          <el-button link type="primary" icon="Edit" @click="">修改</el-button>
+          <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
           <el-button link type="danger" icon="Delete" @click="">删除</el-button>
         </template>
       </el-table-column>
@@ -217,7 +232,7 @@ onMounted(()=>{
       <template #footer>
         <div style="text-align: center">
           <el-button type="primary" @click="submitForm">保存</el-button>
-          <el-button @click="userInfoOpen = false">取消</el-button>
+          <el-button @click="open = false">取消</el-button>
         </div>
       </template>
     </vxe-modal>

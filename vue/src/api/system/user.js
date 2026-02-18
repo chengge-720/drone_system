@@ -32,9 +32,9 @@ export function selectUserList(query){
 }
 
 //查询用户详情
-export function selectUserById(userId){
+export function selectUserByUserId(userId){
     return request({
-        url:"/system/user/selectUserById/" + userId,
+        url:"/system/user/selectUserByUserId/" + userId,
         method:"get",
     })
 }
@@ -44,6 +44,15 @@ export function insertUser(data){
     return request({
         url:"/system/user/insertUser",
         method:"post",
+        data: data
+    })
+}
+
+//修改用户
+export function updateUser(data){
+    return request({
+        url:"/system/user/updateUser",
+        method:"put",
         data: data
     })
 }

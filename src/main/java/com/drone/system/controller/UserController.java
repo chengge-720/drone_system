@@ -46,6 +46,12 @@ public class UserController extends BaseController {
         return toAjax(userService.insertUser(user));
     }
 
-
+    /**
+     * 修改用户
+     */
+    @PutMapping("/updateUser")
+    public AjaxResult updateUser(@RequestBody User user) {
+        return toAjax(userService.updateUser(user));
+    }
 
 }
