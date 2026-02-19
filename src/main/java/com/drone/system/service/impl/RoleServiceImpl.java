@@ -20,4 +20,9 @@ public class RoleServiceImpl implements IRoleService {
     public List<Role> selectRoleList(Role role) {
         return roleMapper.selectRoleList(role);
     }
+
+    @Override
+    public Role selectRoleByRoleId(Long roleId) {
+        return roleMapper.selectRoleByRoleId(roleId);
+    }
 }

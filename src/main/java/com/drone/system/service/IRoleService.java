@@ -13,4 +13,11 @@ public interface IRoleService {
      * @return
      */
     List<Role> selectRoleList(Role role);
+
+    /**
+     * 根据角色ID查询角色
+     * @param roleId
+     * @return
+     */
+    Role selectRoleByRoleId(Long roleId);
 }

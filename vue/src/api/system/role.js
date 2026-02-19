@@ -17,3 +17,11 @@ export function selectRoleList(query) {
     params: query
   })
 }
+
+//根据角色ID查询角色信息
+export function selectRoleByRoleId(roleId) {
+  return request({
+    url: '/system/role/selectRoleByRoleId/' + roleId,
+    method: 'get'
+  })
+}

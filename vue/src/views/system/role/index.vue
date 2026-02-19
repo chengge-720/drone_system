@@ -1,7 +1,7 @@
 <script setup lang="ts">
 //角色列表数据
 import {onMounted, ref} from "vue";
-import {selectRoleList} from "@/api/system/role.js";
+import {selectRoleList, selectRoleByRoleId} from "@/api/system/role.js";
 import defaultAvatar from "@/assets/images/profile.jpg"
 import Pagination from "@/components/Pagination/index.vue";
 

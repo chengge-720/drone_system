@@ -12,7 +12,8 @@
 
     <!-- 查询角色列表 -->
     <select id="selectRoleList" resultMap="RoleResult" parameterType="Role">
-        select role_id, role_name, role_sort, create_time from role
+        select role_id, role_name, role_sort, create_time
+        from role
         <where>
             <if test="roleId != null">
                 and role_id = #{roleId}
@@ -22,6 +23,13 @@
             </if>
         </where>
         order by role_sort
+    </select>
+
+    <!-- 根据角色ID查询角色 -->
+    <select id="selectRoleByRoleId" resultMap="RoleResult" parameterType="Long">
+        select role_id, role_name, role_sort, create_time
+        from role
+        where role_id = #{roleId}
     </select>
 
 

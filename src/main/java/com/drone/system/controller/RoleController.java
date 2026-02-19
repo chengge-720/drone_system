@@ -5,9 +5,7 @@ import com.drone.system.domain.Role;
 import com.drone.system.domain.TableDataInfo;
 import com.drone.system.service.IRoleService;
 import jakarta.annotation.Resource;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
@@ -37,4 +35,12 @@ public class RoleController extends BaseController{
          List<Role> list = roleService.selectRoleList(role);
          return getDataTable(list);
      }
+
+     /**
+      * 根据角色ID查询角色
+      */
+      @GetMapping("/selectRoleByRoleId/{roleId}")
+      public AjaxResult selectRoleByRoleId(@PathVariable Long roleId) {
+          return success(roleService.selectRoleByRoleId(roleId));
+      }
 }

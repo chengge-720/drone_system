@@ -6,4 +6,6 @@ import java.util.List;
 
 public interface RoleMapper {
     List<Role> selectRoleList(Role role);
+
+    Role selectRoleByRoleId(Long roleId);
 }
