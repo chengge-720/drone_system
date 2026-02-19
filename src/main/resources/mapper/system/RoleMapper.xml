@@ -3,11 +3,26 @@
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.drone.system.mapper.RoleMapper">
-    <resultMap id="roleResult" type="Role">
+    <resultMap id="RoleResult" type="Role">
         <id property="roleId" column="role_id" />
         <result property="roleName" column="role_name" />
         <result property="roleSort" column="role_sort" />
         <result property="createTime" column="create_time" />
     </resultMap>
+
+    <!-- 查询角色列表 -->
+    <select id="selectRoleList" resultMap="RoleResult" parameterType="Role">
+        select role_id, role_name, role_sort, create_time from role
+        <where>
+            <if test="roleId != null">
+                and role_id = #{roleId}
+            </if>
+            <if test="roleName != null and roleName != ''">
+                and role_name like concat('%',#{roleName},'%')
+            </if>
+        </where>
+        order by role_sort
+    </select>
+
 
 </mapper>

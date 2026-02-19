@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.drone.system.mapper.UserRoleMapper">
+
+    <!--新增用户和角色关联-->
+    <insert id="insertUserRole">
+        insert into user_role (user_id, role_id) values (#{userId}, #{roleId})
+    </insert>
+
+    <!--根据用户ID删除用户和角色关联-->
+    <delete id="deleteUserRoleByUserId">
+        delete from user_role where user_id = #{userId}
+    </delete>
+
+    <!--批量删除用户和角色关联-->
+    <delete id="deleteUserRoles">
+        delete from user_role where user_id in
+        <foreach collection="array" item="userId" open="(" separator="," close=")">
+            #{userId}
+        </foreach>
+    </delete>
+
+</mapper>

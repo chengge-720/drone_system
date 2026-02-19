@@ -2,6 +2,7 @@
 
 import {onMounted, ref} from "vue";
 import {selectUserList, insertUser, selectUserByUserId, updateUser, deleteUserByUserIds} from "@/api/system/user.js";
+import {selectAllRole} from "@/api/system/role.js";
 
 //用户默认头像
 import defaultAvatar from '@/assets/images/profile.jpg'
@@ -24,6 +25,7 @@ const form = ref({
   userName: null,
   sex: null,
   password: null,
+  roleId: null,
 })
 
 //表单验证规则
@@ -34,6 +36,9 @@ const rules = {
   password: [
     {required: true, message: '请输入密码', trigger: 'blur'},
   ],
+  roleId: [
+    {required: true, message: '请选择角色', trigger: 'change'},
+  ],
 }
 
 //新增按钮
@@ -43,6 +48,7 @@ const handleInsert = ()=>{
     userName: null,
     sex: null,
     password: null,
+    roleId: null,
   }
   open.value = true
   title.value = '添加用户'
@@ -117,7 +123,7 @@ const queryRef = ref()
 //查询参数
 const query = ref({
   pageNum: 1,
-  pageSize: 10,
+  pageSize: 5,
   userName: null,
 })
 
@@ -163,8 +169,16 @@ const resetQuery = () => {
   handleQuery()
 }
 
+//角色列表数据
+const roleList = ref([]);
+
 onMounted(()=>{
   getList()
+  //查询角色列表
+  selectAllRole().then(res=>{
+    roleList.value = res.data
+  })
+
 })
 
 </script>
@@ -207,6 +221,12 @@ onMounted(()=>{
       <el-table-column type="selection" width="80" align="center"/>
       <el-table-column prop="userId" label="用户编号" width="180" align="center"/>
       <el-table-column prop="userName" label="用户名称" align="center"/>
+      <el-table-column prop="roleName" label="角色名称" align="center">
+          <template #default="scope">
+            <span v-if="scope.row.roleId === 1">管理员</span>
+            <span v-else-if="scope.row.roleId === 2">普通用户</span>
+          </template>
+      </el-table-column>
         <el-table-column prop="sex" label="性别" align="center">
           <template #default="scope">
             <span v-if="scope.row.sex === 0">男</span>
@@ -226,7 +246,6 @@ onMounted(()=>{
         </template>
       </el-table-column>
     </el-table>
-
 
     <!-- 分页 -->
     <pagination :total="total"
@@ -249,6 +268,14 @@ onMounted(()=>{
         </el-form-item>
         <el-form-item label="密码" prop="password">
           <el-input v-model="form.password" placeholder="请输入密码" />
+        </el-form-item>
+        <el-form-item label="角色" prop="roleId">
+          <el-select v-model="form.roleId" placeholder="请选择角色">
+            <el-option v-for="role in roleList"
+                       :key="role.roleId"
+                       :label="role.roleName"
+                       :value="role.roleId" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>

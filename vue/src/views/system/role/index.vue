@@ -1,11 +1,107 @@
 <script setup lang="ts">
+//角色列表数据
+import {onMounted, ref} from "vue";
+import {selectRoleList} from "@/api/system/role.js";
+import defaultAvatar from "@/assets/images/profile.jpg"
+import Pagination from "@/components/Pagination/index.vue";
 
+//多选的ID数组
+const ids = ref([]);
+
+//当前是否未选中单行
+const single = ref(true);
+
+//当前是否未选中多行
+const multiple = ref(true);
+
+//顶部查询表单实例
+const queryRef = ref()
+
+//多选触发
+const handleSelectionChange = (selection)=>{
+  ids.value = selection.map(item => item.userId)
+  single.value = selection.length !== 1
+  multiple.value = !selection.length
+}
+
+//角色列表数据
+const roleList = ref([]);
+
+//数据总数
+const total = ref(0);
+
+//搜索方法
+const handleQuery = () => {
+  query.value.pageNum = 1
+  getList()
+}
+
+//清空方法
+const resetQuery = () => {
+  queryRef.value.resetFields()
+  handleQuery()
+}
+
+//查询参数
+const query = ref({
+  pageNum: 1,
+  pageSize: 5,
+  roleName: null,
+})
+
+//查询数据
+const getList = ()=>{
+  selectRoleList(query.value).then(res=>{
+    roleList.value = res.rows
+    total.value = res.total
+  })
+}
+
+onMounted(()=>{
+  getList()
+})
 </script>
 
 <template>
-  <div>
+<div class="app-container">
     <h1>角色管理</h1>
-  </div>
+    <!--顶部搜索-->
+    <el-form :model="query" ref="queryRef" label-width="70px" inline>
+      <el-form-item label="角色名称" prop="roleName">
+        <el-input v-model="query.roleName" placeholder="请输入角色名称"/>
+      </el-form-item>
+      <el-form-item>
+        <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
+        <el-button icon="Refresh" @click="resetQuery">清空</el-button>
+        <!--顶部按钮-->
+        <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
+        <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate">修改</el-button>
+        <el-button :disabled="multiple" type="danger" icon="Delete" @click="handleDelete">批量删除</el-button>
+      </el-form-item>
+    </el-form>
+
+    <!-- 列表 -->
+    <el-table :data="roleList" style="width: 100%" border @selection-change="handleSelectionChange">
+      <el-table-column type="selection" width="80" align="center"/>
+      <el-table-column prop="roleId" label="角色编号" width="180" align="center"/>
+      <el-table-column prop="roleName" label="角色名称" align="center"/>
+      <el-table-column label="操作" align="center" width="180">
+        <template #default="scope">
+          <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
+          <el-button link type="danger" icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+  <!-- 分页 -->
+  <pagination :total="total"
+              v-model:page="query.pageNum"
+              v-model:limit="query.pageSize"
+              @pagination="getList"
+  />
+
+</div>
+
 </template>
 
 <style scoped>

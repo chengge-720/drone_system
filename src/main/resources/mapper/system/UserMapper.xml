@@ -14,6 +14,8 @@
         <result property="avatar" column="avatar"/>
         <result property="password" column="password"/>
         <result property="createTime" column="create_time"/>
+        <result property="roleId" column="role_id"/>
+        <result property="roleName" column="role_name"/>
     </resultMap>
 
     <!--以下两种定义方法相同-->
@@ -25,23 +27,34 @@
         where user_name = #{userName}
     </select>
 
-    <!--通过用户Id查询用户信息-->
-    <select id="selectUserByUserId" resultMap="UserResult" parameterType="Long">
+    <!--通过用户Id查询用户信息
         select user_id, user_name, sex, avatar, password, create_time
         from user
-        where user_id = #{userId}
+        where user_id = #{userId}-->
+    <select id="selectUserByUserId" resultMap="UserResult" parameterType="Long">
+        select u.user_id, u.user_name, u.sex, u.avatar, u.password, u.create_time,
+               ur.role_id,
+               r.role_name
+        from user u
+        left join user_role ur on u.user_id = ur.user_id
+        left join role r on ur.role_id = r.role_id
+        where u.user_id = #{userId}
     </select>
 
     <!--查询用户列表-->
     <select id="selectUserList" resultMap="UserResult">
-        select user_id, user_name, sex, avatar, password, create_time
-        from user
+        select u.user_id, u.user_name, u.sex, u.avatar, u.password, u.create_time,
+               ur.role_id,
+               r.role_name
+        from user u
+        left join user_role ur on u.user_id = ur.user_id
+        left join role r on ur.role_id = r.role_id
         <where>
             <if test="userId != null">
-                and user_id = #{userId}
+                and u.user_id = #{userId}
             </if>
             <if test="userName != null and userName != ''">
-                and user_name like concat('%',#{userName},'%')
+                and u.user_name like concat('%',#{userName},'%')
             </if>
         </where>
     </select>
@@ -50,8 +63,10 @@
     <!--
         第一个trim标签，用于生成SQL语句的字段部分，
         生成的字段：user_id,user_name,password
+        useGeneratedKeys="true"
+        keyProperty="userId"这两个属性，用于获取数据库自动生成的主键值，同时将主键值赋给设置对象User的userId属性
     -->
-    <insert id="insertUser" parameterType="User">
+    <insert id="insertUser" parameterType="User" useGeneratedKeys="true" keyProperty="userId">
         insert into user
         <trim prefix="(" suffix=")" suffixOverrides=",">
             <if test="userId != null">user_id,</if>

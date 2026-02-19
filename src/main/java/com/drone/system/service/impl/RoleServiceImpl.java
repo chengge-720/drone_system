@@ -1,9 +1,12 @@
 package com.drone.system.service.impl;
 
+import com.drone.system.domain.Role;
 import com.drone.system.mapper.RoleMapper;
 import com.drone.system.service.IRoleService;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 /**
  * 角色Service业务层处理
@@ -12,4 +15,9 @@ import org.springframework.stereotype.Service;
 public class RoleServiceImpl implements IRoleService {
     @Resource
     private RoleMapper roleMapper;
+
+    @Override
+    public List<Role> selectRoleList(Role role) {
+        return roleMapper.selectRoleList(role);
+    }
 }

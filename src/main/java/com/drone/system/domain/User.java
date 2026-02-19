@@ -27,5 +27,8 @@ public class User {
     //创建时间,并控制输出格式
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private Date createTime;
-
+    //角色ID，用于关联角色权限控制
+    private Long roleId;
+    //角色名称，用于前端显示并查询
+    private String roleName;
 }
