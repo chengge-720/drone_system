@@ -20,4 +20,11 @@ public interface IRoleService {
      * @return
      */
     Role selectRoleByRoleId(Long roleId);
+
+    /**
+     * 添加角色
+     * @param role
+     * @return
+     */
+    int insertRole(Role role);
 }

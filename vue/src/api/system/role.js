@@ -25,3 +25,12 @@ export function selectRoleByRoleId(roleId) {
     method: 'get'
   })
 }
+
+//新增角色
+export function insertRole(data) {
+  return request({
+    url: '/system/role/insertRole',
+    method: 'post',
+    data: data
+  })
+}

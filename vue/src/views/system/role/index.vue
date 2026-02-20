@@ -1,9 +1,67 @@
 <script setup lang="ts">
 //角色列表数据
 import {onMounted, ref} from "vue";
-import {selectRoleList, selectRoleByRoleId} from "@/api/system/role.js";
+import {selectRoleList, selectRoleByRoleId ,insertRole} from "@/api/system/role.js";
 import defaultAvatar from "@/assets/images/profile.jpg"
 import Pagination from "@/components/Pagination/index.vue";
+import {VxeModal} from "vxe-pc-ui";
+import {ElMessage} from "element-plus";
+
+//表单实例
+const roleRef = ref()
+
+//表单title
+const title = ref('');
+
+//对话框是否打开
+const open = ref(false);
+
+//表单参数
+const form = ref({
+  roleId: null,
+  roleName: null,
+  roleSort: null,
+})
+
+//表单验证规则
+const rules = {
+  roleName: [
+    {required: true, message: '请输入角色名称', trigger: 'blur'},
+  ],
+  roleSort: [
+    {required: true, message: '请输入角色排序', trigger: 'blur'},
+  ],
+}
+
+//新增按钮
+const handleInsert = ()=>{
+  form.value = {
+    roleId: null,
+    roleName: null,
+    roleSort: null,
+  }
+  open.value = true
+  title.value = '添加角色'
+}
+
+//保存按钮
+const submitForm = () => {
+  roleRef.value.validate(valid => {
+    if (valid) {
+      if(form.value.roleId != null){
+        //修改,调用修改api
+
+      }else{
+        //新增,调用新增api
+        insertRole(form.value).then(res => {
+          ElMessage.success('保存成功')
+          open.value = false
+          getList()
+        })
+      }
+    }
+  })
+}
 
 //多选的ID数组
 const ids = ref([]);
@@ -99,6 +157,24 @@ onMounted(()=>{
               v-model:limit="query.pageSize"
               @pagination="getList"
   />
+
+  <!-- 添加角色管理框 -->
+  <vxe-modal :title="title" width="500px" v-model="open" showFooter show-maximize resize>
+    <el-form ref="roleRef" :model="form" :rules="rules" label-width="80px">
+      <el-form-item label="角色名称" prop="roleName">
+        <el-input v-model="form.roleName" placeholder="请输入角色名称" />
+      </el-form-item>
+      <el-form-item label="角色排序" prop="roleSort">
+        <el-input v-model="form.roleSort" placeholder="请输入角色排序" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <div style="text-align: center">
+        <el-button type="primary" @click="submitForm">保存</el-button>
+        <el-button @click="open = false">取消</el-button>
+      </div>
+    </template>
+  </vxe-modal>
 
 </div>
 

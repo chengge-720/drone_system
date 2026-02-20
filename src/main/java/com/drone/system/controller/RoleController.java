@@ -14,7 +14,7 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/system/role")
-public class RoleController extends BaseController{
+public class RoleController extends BaseController {
     @Resource
     private IRoleService roleService;
 
@@ -29,18 +29,26 @@ public class RoleController extends BaseController{
     /**
      * 获取角色列表
      */
-     @GetMapping("/selectRoleList")
-     public TableDataInfo selectRoleList(Role role) {
-         startPage();
-         List<Role> list = roleService.selectRoleList(role);
-         return getDataTable(list);
-     }
+    @GetMapping("/selectRoleList")
+    public TableDataInfo selectRoleList(Role role) {
+        startPage();
+        List<Role> list = roleService.selectRoleList(role);
+        return getDataTable(list);
+    }
 
-     /**
-      * 根据角色ID查询角色
-      */
-      @GetMapping("/selectRoleByRoleId/{roleId}")
-      public AjaxResult selectRoleByRoleId(@PathVariable Long roleId) {
-          return success(roleService.selectRoleByRoleId(roleId));
-      }
+    /**
+     * 根据角色ID查询角色
+     */
+    @GetMapping("/selectRoleByRoleId/{roleId}")
+    public AjaxResult selectRoleByRoleId(@PathVariable Long roleId) {
+        return success(roleService.selectRoleByRoleId(roleId));
+    }
+
+    /**
+     * 添加角色
+     */
+    @PostMapping("/insertRole")
+    public AjaxResult insertRole(@RequestBody Role role) {
+        return toAjax(roleService.insertRole(role));
+    }
 }

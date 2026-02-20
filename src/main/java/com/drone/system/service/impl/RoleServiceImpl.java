@@ -25,4 +25,9 @@ public class RoleServiceImpl implements IRoleService {
     public Role selectRoleByRoleId(Long roleId) {
         return roleMapper.selectRoleByRoleId(roleId);
     }
+
+    @Override
+    public int insertRole(Role role) {
+        return roleMapper.insertRole(role);
+    }
 }
