@@ -34,3 +34,20 @@ export function insertRole(data) {
     data: data
   })
 }
+
+//修改角色
+export function updateRole(data) {
+  return request({
+    url: '/system/role/updateRole',
+    method: 'put',
+    data: data
+  })
+}
+
+//删除角色
+export function deleteRoleByRoleIds(roleIds) {
+  return request({
+    url: '/system/role/deleteRoleByRoleIds/' + roleIds,
+    method: 'delete'
+  })
+}

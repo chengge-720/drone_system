@@ -1,11 +1,11 @@
 <script setup lang="ts">
 //角色列表数据
 import {onMounted, ref} from "vue";
-import {selectRoleList, selectRoleByRoleId ,insertRole} from "@/api/system/role.js";
+import {selectRoleList, selectRoleByRoleId ,insertRole ,updateRole ,deleteRoleByRoleIds} from "@/api/system/role.js";
 import defaultAvatar from "@/assets/images/profile.jpg"
 import Pagination from "@/components/Pagination/index.vue";
 import {VxeModal} from "vxe-pc-ui";
-import {ElMessage} from "element-plus";
+import {ElMessage, ElMessageBox} from "element-plus";
 
 //表单实例
 const roleRef = ref()
@@ -50,7 +50,11 @@ const submitForm = () => {
     if (valid) {
       if(form.value.roleId != null){
         //修改,调用修改api
-
+        updateRole(form.value).then(res => {
+          ElMessage.success('修改成功')
+          open.value = false
+          getList()
+        })
       }else{
         //新增,调用新增api
         insertRole(form.value).then(res => {
@@ -61,6 +65,38 @@ const submitForm = () => {
       }
     }
   })
+}
+
+//修改按钮
+const handleUpdate = (row) => {
+  const roleId = row.roleId || ids.value
+  selectRoleByRoleId(roleId).then(res => {
+    form.value = res.data
+    open.value = true
+    title.value = '修改角色'
+  })
+}
+
+//删除按钮
+const handleDelete = (row) => {
+  const roleIds = row.roleId || ids.value
+
+  ElMessageBox.confirm(
+      '是否删除该角色?',
+      '删除',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+  )
+      .then(() => {
+        //删除,调用删除api
+        deleteRoleByRoleIds(roleIds).then(res => {
+          ElMessage.success('删除成功')
+          getList()
+        })
+      })
 }
 
 //多选的ID数组
@@ -77,7 +113,7 @@ const queryRef = ref()
 
 //多选触发
 const handleSelectionChange = (selection)=>{
-  ids.value = selection.map(item => item.userId)
+  ids.value = selection.map(item => item.roleId)
   single.value = selection.length !== 1
   multiple.value = !selection.length
 }
@@ -133,8 +169,6 @@ onMounted(()=>{
         <el-button icon="Refresh" @click="resetQuery">清空</el-button>
         <!--顶部按钮-->
         <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
-        <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate">修改</el-button>
-        <el-button :disabled="multiple" type="danger" icon="Delete" @click="handleDelete">批量删除</el-button>
       </el-form-item>
     </el-form>
 

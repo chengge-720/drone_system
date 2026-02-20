@@ -27,4 +27,13 @@ public interface IRoleService {
      * @return
      */
     int insertRole(Role role);
+
+    /**
+     * 修改角色
+     * @param role
+     * @return
+     */
+    int updateRole(Role role);
+
+    int deleteRoleByRoleIds(Long[] roleIds);
 }

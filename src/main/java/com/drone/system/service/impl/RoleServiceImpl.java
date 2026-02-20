@@ -30,4 +30,14 @@ public class RoleServiceImpl implements IRoleService {
     public int insertRole(Role role) {
         return roleMapper.insertRole(role);
     }
+
+    @Override
+    public int updateRole(Role role) {
+        return roleMapper.updateRole(role);
+    }
+
+    @Override
+    public int deleteRoleByRoleIds(Long[] roleIds) {
+        return roleMapper.deleteRoleByRoleIds(roleIds);
+    }
 }

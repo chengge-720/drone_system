@@ -10,4 +10,8 @@ public interface RoleMapper {
     Role selectRoleByRoleId(Long roleId);
 
     int insertRole(Role role);
+
+    int updateRole(Role role);
+
+    int deleteRoleByRoleIds(Long[] roleIds);
 }

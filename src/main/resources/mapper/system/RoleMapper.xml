@@ -46,4 +46,25 @@
             <if test="roleSort != null">#{roleSort},</if>
         </trim>
     </insert>
+
+    <!--修改角色-->
+    <update id="updateRole" parameterType="Role">
+        update role
+        <set >
+            <if test="roleName != null and roleName != ''">role_name = #{roleName},</if>
+            <if test="roleSort != null">role_sort = #{roleSort},</if>
+
+        </set>
+        where role_id = #{roleId}
+    </update>
+
+    <!--删除角色-->
+    <delete id="deleteRoleByRoleIds" parameterType="Role">
+        delete from role
+        where role_id in
+        <foreach collection="array" item="roleId" open="(" separator="," close=")">
+            #{roleId}
+        </foreach>
+    </delete>
+
 </mapper>

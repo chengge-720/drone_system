@@ -51,4 +51,25 @@ public class RoleController extends BaseController {
     public AjaxResult insertRole(@RequestBody Role role) {
         return toAjax(roleService.insertRole(role));
     }
+
+    /**
+     * 修改角色
+     */
+    @PutMapping("/updateRole")
+    public AjaxResult updateRole(@RequestBody Role role) {
+        return toAjax(roleService.updateRole(role));
+    }
+
+    /**
+     * 删除角色
+     */
+    @DeleteMapping("/deleteRoleByRoleIds/{roleIds}")
+    public AjaxResult deleteRoleByRoleIds(@PathVariable Long[] roleIds) {
+        for(Long roleId:roleIds){
+            if(roleId==1L || roleId==2L){
+                return error("系统管理员和普通用户不允许删除！");
+            }
+        }
+        return toAjax(roleService.deleteRoleByRoleIds(roleIds));
+    }
 }
