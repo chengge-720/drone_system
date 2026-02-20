@@ -5,6 +5,9 @@ import lombok.Data;
 
 import java.util.Date;
 
+/**
+ * 角色信息
+ */
 @Data
 public class Role {
     //角色ID
