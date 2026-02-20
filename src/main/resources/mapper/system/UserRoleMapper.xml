@@ -22,4 +22,11 @@
         </foreach>
     </delete>
 
+    <!-- 根据用户ID查询角色ID -->
+    <select id="selectRoleIdByUserId" resultType="java.lang.Long">
+        select role_id
+        from user_role
+        where user_id = #{userId}
+    </select>
+
 </mapper>

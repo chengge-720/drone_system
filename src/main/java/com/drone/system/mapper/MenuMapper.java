@@ -1,6 +1,9 @@
 package com.drone.system.mapper;
 
+import com.drone.system.domain.Menu;
 import org.apache.ibatis.annotations.Mapper;
+
+import java.util.List;
 
 /**
  * 菜单Mapper
@@ -8,4 +11,11 @@ import org.apache.ibatis.annotations.Mapper;
 @Mapper
 public interface MenuMapper {
 
+    /**
+     * 根据用户ID查询对应的菜单
+     * @param menu
+     * @param userId
+     * @return
+     */
+    List<Menu> selectMenuListByUserId(Menu menu);
 }

@@ -15,7 +15,22 @@
         <result property="createTime" column="create_time"/>
     </resultMap>
 
-
+    <!-- 根据用户ID查询菜单列表 -->
+    <select id="selectMenuListByUserId" resultMap="MenuResult" parameterType="Menu">
+        select m.menu_id, m.menu_name, m.parent_id, m.menu_sort, m.path,
+               m.component, m.menu_type, m.icon, m.create_time
+        from menu m
+        left join role_menu rm on m.menu_id = rm.menu_id
+        left join user_role ur on rm.role_id = ur.role_id
+        <where>
+            <if test="userId != null">
+                and ur.user_id = #{userId}
+            </if>
+            <if test="menuName != null and menuName != ''">
+                and m.menu_name like concat('%', #{menuName}, '%')
+            </if>
+        </where>
+    </select>
 
 
 </mapper>
