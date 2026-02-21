@@ -34,7 +34,7 @@ const rules = {
 }
 
 //新增按钮
-const handleInsert = ()=>{
+const handleInsert = () => {
   form.value = {
     roleId: null,
     roleName: null,
