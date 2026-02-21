@@ -70,10 +70,14 @@ public class MenuController extends BaseController {
      */
     @GetMapping("/selectRoleMenuTree/{roleId}")
     public AjaxResult selectRoleMenuTree(@PathVariable Long roleId) {
+        //获取所有菜单列表
+        List<Menu> menus = menuService.selectMenuList(new Menu(), SecurityUtils.getUserId());
         //获取角色对应的菜单树
         AjaxResult ajax = AjaxResult.success();
         //获取角色对应的菜单ID列表放入checkedKeys
         ajax.put("checkedKeys", menuService.selectMenuListByRoleId(roleId));
+        //构建前端所需的下拉菜单树形结构
+        ajax.put("menus", menuService.buildMenuTreeSelect(menus));
         return ajax;
     }
 }

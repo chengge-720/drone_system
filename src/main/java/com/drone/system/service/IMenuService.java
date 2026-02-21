@@ -2,6 +2,7 @@ package com.drone.system.service;
 
 import com.drone.system.domain.AjaxResult;
 import com.drone.system.domain.Menu;
+import com.drone.system.domain.TreeSelect;
 
 import java.util.List;
 
@@ -40,4 +41,11 @@ public interface IMenuService {
      * @return 角色对应的菜单ID列表
      */
     List<Long> selectMenuListByRoleId(Long roleId);
+
+    /**
+     * 构建菜单树
+     * @param menus 菜单列表
+     * @return 构建后的菜单树
+     */
+    List<TreeSelect> buildMenuTreeSelect(List<Menu> menus);
 }

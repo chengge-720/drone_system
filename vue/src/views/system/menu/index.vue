@@ -65,7 +65,9 @@ const handleInsert = ()=>{
     path: null,
     component: null,
   }
-  getTreeSelect()
+  if(menuOptions.value.length === 0){
+    getTreeSelect()
+  }
   open.value = true
   title.value = '新增菜单'
 }
@@ -73,7 +75,10 @@ const handleInsert = ()=>{
 //修改按钮
 const handleUpdate = (row) => {
   const menuId = row.menuId
-  getTreeSelect()
+  //
+  if(menuOptions.value.length === 0){
+    getTreeSelect()
+  }
   selectMenuByMenuId(menuId).then(res => {
     form.value = res.data
     open.value = true
@@ -109,10 +114,11 @@ const getTreeSelect = ()=>{
   //查询所有菜单
   selectMenuList().then(res=>{
     const menu = {menuId:0, menuName:'顶级菜单', children:[]}
-    menu.children = buildTree(res.data,0)
-    //添加顶级菜单,注意，如果多次打开下拉弹出，树内会有重复数据，所以要清空
-    menuOptions.value = []
-    menuOptions.value.push(menu)
+    // 使用深拷贝避免引用问题
+    const treeData = JSON.parse(JSON.stringify(res.data))
+    menu.children = buildTree(treeData,0)
+    // 清空并重新设置，避免重复数据
+    menuOptions.value = [menu]
   })
 }
 
@@ -165,10 +171,12 @@ const resetQuery = () => {
 const getList = ()=>{
   selectMenuList(query.value).then(res=>{
     if(query.value.menuName !== null){
-      //如果有查询参数
-      menuList.value = res.data
+      //如果有查询参数，使用深拷贝避免引用问题
+      menuList.value = JSON.parse(JSON.stringify(res.data))
     }else{
-      menuList.value = buildTree(res.data,0)
+      //构建树形结构时也使用深拷贝
+      const treeData = JSON.parse(JSON.stringify(res.data))
+      menuList.value = buildTree(treeData,0)
     }
   })
 }
