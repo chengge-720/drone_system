@@ -25,3 +25,29 @@ export function selectMenuByMenuId(menuId) {
     method: 'get',
   })
 }
+
+//修改菜单
+export function updateMenu(data) {
+  return request({
+    url: '/system/menu/updateMenu',
+    method: 'put',
+    data: data
+  })
+}
+
+//删除菜单
+export function deleteMenuByMenuId(menuId) {
+  return request({
+    url: '/system/menu/deleteMenuByMenuId/' + menuId,
+    method: 'delete',
+  })
+}
+
+//根据角色ID查询菜单树
+export function selectRoleMenuTree(roleId) {
+  return request({
+    url: '/system/menu/selectRoleMenuTree/' + roleId,
+    method: 'get',
+  })
+}
+

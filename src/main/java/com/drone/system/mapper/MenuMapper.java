@@ -22,4 +22,10 @@ public interface MenuMapper {
     int insertMenu(Menu menu);
 
     Menu selectMenuByMenuId(Long menuId);
+
+    int updateMenu(Menu menu);
+
+    int deleteMenuByMenuId(Long menuId);
+
+    List<Long> selectMenuListByRoleId(Long roleId);
 }

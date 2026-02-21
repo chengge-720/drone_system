@@ -65,4 +65,33 @@
         </trim>
     </insert>
 
+    <!-- 修改菜单 -->
+    <update id="updateMenu" parameterType="Menu">
+        update menu
+        <set>
+            <if test="menuName != null and menuName != ''">menu_name = #{menuName},</if>
+            <if test="parentId != null">parent_id = #{parentId},</if>
+            <if test="menuSort != null">menu_sort = #{menuSort},</if>
+            <if test="path != null and path != ''">path = #{path},</if>
+            <if test="component != null and component != ''">component = #{component},</if>
+            <if test="menuType != null and menuType != ''">menu_type = #{menuType},</if>
+            <if test="icon != null and icon != ''">icon = #{icon},</if>
+        </set>
+        where menu_id = #{menuId}
+    </update>
+
+    <!-- 删除菜单 -->
+    <delete id="deleteMenuByMenuId" parameterType="Long">
+        delete from menu
+        where menu_id = #{menuId}
+    </delete>
+
+    <!-- 根据角色ID查询菜单ID列表 -->
+    <select id="selectMenuListByRoleId" resultType="Long">
+        select m.menu_id
+        from menu m
+        left join role_menu rm on m.menu_id = rm.menu_id
+        where rm.role_id = #{roleId}
+        order by m.parent_id, m.menu_sort
+    </select>
 </mapper>

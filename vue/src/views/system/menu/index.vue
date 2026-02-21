@@ -1,10 +1,10 @@
 <script setup lang="ts">
 
 import {onMounted, ref} from "vue";
-import {selectMenuList ,insertMenu} from "@/api/system/menu.js"
+import {selectMenuList ,insertMenu ,selectMenuByMenuId ,updateMenu ,deleteMenuByMenuId} from "@/api/system/menu.js"
 import SvgIcon from "@/components/SvgIcon/index.vue";
 import {VxeModal} from "vxe-pc-ui";
-import {ElMessage, ElTreeSelect} from "element-plus";
+import {ElMessage, ElMessageBox, ElTreeSelect} from "element-plus";
 import {Search} from "@element-plus/icons-vue";
 import IconSelect from "@/components/IconSelect/index.vue";
 
@@ -70,6 +70,38 @@ const handleInsert = ()=>{
   title.value = '新增菜单'
 }
 
+//修改按钮
+const handleUpdate = (row) => {
+  const menuId = row.menuId
+  getTreeSelect()
+  selectMenuByMenuId(menuId).then(res => {
+    form.value = res.data
+    open.value = true
+    title.value = '修改菜单'
+  })
+}
+
+//删除按钮
+const handleDelete = (row) => {
+  const menuId = row.menuId
+  ElMessageBox.confirm(
+      '是否删除该菜单?',
+      '删除',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+  )
+      .then(() => {
+        //删除,调用删除api
+        deleteMenuByMenuId(menuId).then(res => {
+          ElMessage.success('删除成功')
+          getList()
+        })
+      })
+}
+
 const menuOptions = ref( [])
 
 //查询菜单下拉树形结构
@@ -101,6 +133,11 @@ const submitForm = () => {
     if (valid) {
       if(form.value.menuId != null){
         //调用修改api
+        updateMenu(form.value).then(res => {
+          ElMessage.success('修改成功')
+          open.value = false
+          getList()
+        })
       }else{
         //调用新增api
         insertMenu(form.value).then(res=>{

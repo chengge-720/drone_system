@@ -46,4 +46,19 @@ public class IMenuServiceImpl implements IMenuService {
     public Menu selectMenuByMenuId(Long menuId) {
         return menuMapper.selectMenuByMenuId(menuId);
     }
+
+    @Override
+    public int updateMenu(Menu menu) {
+        return menuMapper.updateMenu(menu);
+    }
+
+    @Override
+    public int deleteMenuByMenuId(Long menuId) {
+        return menuMapper.deleteMenuByMenuId(menuId);
+    }
+
+    @Override
+    public List<Long> selectMenuListByRoleId(Long roleId) {
+        return menuMapper.selectMenuListByRoleId(roleId);
+    }
 }

@@ -44,7 +44,7 @@ const sidebarRouters = ref( [
         },
         {
           path: 'taskInfo',
-          meta: { title: '任务信息' ,icon: '任务信息',hidden: false}
+          meta: { title: '任务信息' ,icon: '任务信息管理',hidden: false}
         }
     ]
   },

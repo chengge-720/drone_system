@@ -2,7 +2,7 @@
 //角色列表数据
 import {onMounted, ref} from "vue";
 import {selectRoleList, selectRoleByRoleId ,insertRole ,updateRole ,deleteRoleByRoleIds} from "@/api/system/role.js";
-import defaultAvatar from "@/assets/images/profile.jpg"
+import {selectRoleMenuTree} from "@/api/system/menu.js";
 import Pagination from "@/components/Pagination/index.vue";
 import {VxeModal} from "vxe-pc-ui";
 import {ElMessage, ElMessageBox} from "element-plus";
@@ -70,6 +70,11 @@ const submitForm = () => {
 //修改按钮
 const handleUpdate = (row) => {
   const roleId = row.roleId || ids.value
+  //根据角色ID查询菜单树
+  selectRoleMenuTree(roleId).then(res => {
+
+  })
+
   selectRoleByRoleId(roleId).then(res => {
     form.value = res.data
     open.value = true
