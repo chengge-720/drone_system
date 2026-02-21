@@ -5,7 +5,16 @@ import {selectMenuList} from "@/api/system/menu.js"
 import SvgIcon from "@/components/SvgIcon/index.vue";
 import {VxeModal} from "vxe-pc-ui";
 import {ElTreeSelect} from "element-plus";
-import {build} from "vite";
+import {Search} from "@element-plus/icons-vue";
+import IconSelect from "@/components/IconSelect/index.vue";
+
+//图标选择组件
+const iconSelectRef = ref()
+
+//选择图标回调数据
+const selectedIcon = (name) => {
+  form.value.icon = name
+}
 
 //对话框Title
 const title = ref('')
@@ -178,7 +187,7 @@ onMounted(()=>{
     <!-- 添加角色管理框 -->
     <vxe-modal :title="title" width="50%" v-model="open" showFooter show-maximize resize>
       <el-form ref="menuRef" :model="form" :rules="rules" label-width="80px">
-        <el-row :gutter="20">
+        <el-row>
           <el-col :span="12">
             <el-form-item label="上级菜单">
               <el-tree-select v-model="form.parentId"
@@ -200,17 +209,21 @@ onMounted(()=>{
           </el-col>
         </el-row>
 
-        <el-row :gutter="20">
+        <el-row>
           <el-col :span="12">
             <el-form-item label="图标" prop="icon">
               <el-popover placement="bottom-start" width="550" trigger="click">
                 <template #reference>
                   <el-input v-model="form.icon" placeholder="请选择图标" @blur="">
                     <template #prefix>
-
+                      <svg-icon v-if="form.icon" :icon-class="form.icon" style="height: 32px;width: 16px;"/>
+                      <el-icon v-else>
+                        <Search />
+                      </el-icon>
                     </template>
                   </el-input>
                 </template>
+                <icon-select ref="iconSelectRef" @selected="selectedIcon" style="font-size: medium"/>
               </el-popover>
             </el-form-item>
           </el-col>
@@ -221,15 +234,23 @@ onMounted(()=>{
           </el-col>
         </el-row>
 
-        <el-row :gutter="20">
+        <el-row>
           <el-col :span="12">
             <el-form-item label="菜单名称" prop="menuName">
               <el-input v-model="form.menuName" placeholder="请输入菜单名称"/>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
+          <el-col :span="12" v-if="form.menuType === 'C'">
             <el-form-item label="路由地址" prop="path">
               <el-input v-model="form.path" placeholder="请输入路由地址"/>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row>
+          <el-col :span="12" v-if="form.menuType === 'C'">
+            <el-form-item label="组件路径" prop="component">
+              <el-input v-model="form.component" placeholder="请输入组件路径"/>
             </el-form-item>
           </el-col>
         </el-row>

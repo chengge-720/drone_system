@@ -22,6 +22,9 @@ import 'vxe-pc-ui/es/style.css'
 //分页组件
 import Pagination from '@/components/Pagination/index.vue'
 
+//图标选择组件
+import IconSelect from '@/components/IconSelect/index.vue'
+
 const app = createApp(App)
 
 app.use(createPinia())
@@ -37,6 +40,8 @@ for(const [key, component] of Object.entries(ElementPlusIconsVue)){
 app.component('pagination', Pagination)
 
 app.component('svg-icon', SvgIcon)
+
+app.component('IconSelect', IconSelect)
 
 //本地化配置，将框架组件语言设置为中文
 app.use(ElementPlus, {
