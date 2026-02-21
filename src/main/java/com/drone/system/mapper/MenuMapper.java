@@ -18,4 +18,8 @@ public interface MenuMapper {
      * @return
      */
     List<Menu> selectMenuListByUserId(Menu menu);
+
+    int insertMenu(Menu menu);
+
+    Menu selectMenuByMenuId(Long menuId);
 }

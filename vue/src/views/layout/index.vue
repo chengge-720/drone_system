@@ -1,5 +1,5 @@
 <template>
-  <div >
+  <div class="main-container">
     <!--顶部导航栏-->
     <el-header style="background-color: #4d4fc8;height: 60px;display: flex;
     position: fixed;left: 0;right: 0;top:0;box-shadow:0 0 20px rgba(0,25,55,0.8);">
@@ -47,7 +47,7 @@
 
     <!--主内容区域-->
     <main style="margin-left: 240px;position: relative;top: 60px;border: #007ddd">
-      <AppMain />
+      <AppMain/>
     </main>
 
     <!--侧边栏-->
@@ -130,5 +130,9 @@ watch(() => route.path, () => {
 </script>
 
 <style scoped>
-
+.main-container{
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
 </style>

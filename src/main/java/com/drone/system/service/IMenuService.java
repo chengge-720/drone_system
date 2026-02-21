@@ -13,4 +13,14 @@ public interface IMenuService {
      * 获取菜单列表
      */
     List<Menu> selectMenuList(Menu menu ,Long userId);
+
+    /**
+     * 新增菜单
+     */
+    int insertMenu(Menu menu);
+
+    /**
+     * 根据菜单ID查询菜单详情
+     */
+    Menu selectMenuByMenuId(Long menuId);
 }

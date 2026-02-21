@@ -8,3 +8,20 @@ export function selectMenuList(query) {
     params: query
   })
 }
+
+//新增菜单
+export function insertMenu(data) {
+  return request({
+    url: '/system/menu/insertMenu',
+    method: 'post',
+    data: data
+  })
+}
+
+//根据菜单ID查询菜单详情
+export function selectMenuByMenuId(menuId) {
+  return request({
+    url: '/system/menu/selectMenuByMenuId/' + menuId,
+    method: 'get',
+  })
+}

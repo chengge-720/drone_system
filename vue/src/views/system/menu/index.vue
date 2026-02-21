@@ -1,10 +1,10 @@
 <script setup lang="ts">
 
 import {onMounted, ref} from "vue";
-import {selectMenuList} from "@/api/system/menu.js"
+import {selectMenuList ,insertMenu} from "@/api/system/menu.js"
 import SvgIcon from "@/components/SvgIcon/index.vue";
 import {VxeModal} from "vxe-pc-ui";
-import {ElTreeSelect} from "element-plus";
+import {ElMessage, ElTreeSelect} from "element-plus";
 import {Search} from "@element-plus/icons-vue";
 import IconSelect from "@/components/IconSelect/index.vue";
 
@@ -94,6 +94,24 @@ const queryRef = ref()
 const query = ref({
   menuName: null,
 })
+
+//保存按钮
+const submitForm = () => {
+  menuRef.value.validate(valid => {
+    if (valid) {
+      if(form.value.menuId != null){
+        //调用修改api
+      }else{
+        //调用新增api
+        insertMenu(form.value).then(res=>{
+          ElMessage.success('保存成功')
+          open.value = false
+          getList()
+        })
+      }
+    }
+  })
+}
 
 //搜索方法
 const handleQuery = () => {
