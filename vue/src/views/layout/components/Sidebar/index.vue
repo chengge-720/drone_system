@@ -31,7 +31,7 @@ const sidebarRouters = ref( [
     ]
   },
   {
-    path: '/droneInfo',
+    path: '/uavInfo',
     meta: { title: '无人机管理' ,icon: '无人机管理',hidden: false},
     children:[
         {

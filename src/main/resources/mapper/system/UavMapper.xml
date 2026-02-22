@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--主键字段映射-->
+<mapper namespace="com.drone.system.mapper.UavMapper">
+    <resultMap id="UavResult" type="Uav">
+        <!--主键值映射-->
+        <id property="uavId" column="uav_id"/>
+        <!--普通字段映射-->
+        <result property="uavCode" column="uav_code"/>
+        <result property="uavModel" column="uav_model"/>
+        <result property="uavType" column="uav_type"/>
+        <result property="uavMaxFlightTime" column="max_flight_time"/>
+        <result property="uavMaxLoad" column="max_load"/>
+        <result property="uavBatteryType" column="battery_type"/>
+        <result property="uavBatteryCapacity" column="battery_capacity"/>
+        <result property="uavManufacturer" column="manufacturer"/>
+        <result property="uavStatus" column="status"/>
+        <result property="remark" column="remark"/>
+        <result property="createTime" column="create_time"/>
+    </resultMap>
+    
+    <sql id="selectUavVo">
+        select uav_id, uav_code, uav_model, uav_type, max_flight_time, max_load, battery_type, 
+               battery_capacity, manufacturer, status, remark, create_time 
+        from uav_base_info
+    </sql>
+    
+    <select id="selectUavList" parameterType="Uav" resultMap="UavResult">
+        <include refid="selectUavVo"/>
+        <where>
+            <if test="uavCode != null and uavCode != ''">
+                AND uav_code like concat('%', #{uavCode}, '%')
+            </if>
+            <if test="uavModel != null and uavModel != ''">
+                AND uav_model like concat('%', #{uavModel}, '%')
+            </if>
+            <if test="uavType != null and uavType != ''">
+                AND uav_type = #{uavType}
+            </if>
+            <if test="uavStatus != null and uavStatus != ''">
+                AND status = #{uavStatus}
+            </if>
+        </where>
+        order by uav_id asc
+    </select>
+    
+    <select id="selectUavByUavId" parameterType="Long" resultMap="UavResult">
+        <include refid="selectUavVo"/>
+        where uav_id = #{uavId}
+    </select>
+    
+    <insert id="insertUav" parameterType="Uav" useGeneratedKeys="true" keyProperty="uavId">
+        insert into uav_info
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="uavCode != null and uavCode != ''">uav_code,</if>
+            <if test="uavModel != null and uavModel != ''">uav_model,</if>
+            <if test="uavType != null and uavType != ''">uav_type,</if>
+            <if test="uavMaxFlightTime != null">max_flight_time,</if>
+            <if test="uavMaxLoad != null">max_load,</if>
+            <if test="uavBatteryType != null and uavBatteryType != ''">battery_type,</if>
+            <if test="uavBatteryCapacity != null">battery_capacity,</if>
+            <if test="uavManufacturer != null and uavManufacturer != ''">manufacturer,</if>
+            <if test="uavStatus != null and uavStatus != ''">status,</if>
+            <if test="remark != null and remark != ''">remark,</if>
+            create_time
+        </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="uavCode != null and uavCode != ''">#{uavCode},</if>
+            <if test="uavModel != null and uavModel != ''">#{uavModel},</if>
+            <if test="uavType != null and uavType != ''">#{uavType},</if>
+            <if test="uavMaxFlightTime != null">#{uavMaxFlightTime},</if>
+            <if test="uavMaxLoad != null">#{uavMaxLoad},</if>
+            <if test="uavBatteryType != null and uavBatteryType != ''">#{uavBatteryType},</if>
+            <if test="uavBatteryCapacity != null">#{uavBatteryCapacity},</if>
+            <if test="uavManufacturer != null and uavManufacturer != ''">#{uavManufacturer},</if>
+            <if test="uavStatus != null and uavStatus != ''">#{uavStatus},</if>
+            <if test="remark != null and remark != ''">#{remark},</if>
+            sysdate()
+        </trim>
+    </insert>
+    
+    <update id="updateUav" parameterType="Uav">
+        update uav_info
+        <set>
+            <if test="uavCode != null and uavCode != ''">uav_code = #{uavCode},</if>
+            <if test="uavModel != null and uavModel != ''">uav_model = #{uavModel},</if>
+            <if test="uavType != null and uavType != ''">uav_type = #{uavType},</if>
+            <if test="uavMaxFlightTime != null">max_flight_time = #{uavMaxFlightTime},</if>
+            <if test="uavMaxLoad != null">max_load = #{uavMaxLoad},</if>
+            <if test="uavBatteryType != null and uavBatteryType != ''">battery_type = #{uavBatteryType},</if>
+            <if test="uavBatteryCapacity != null">battery_capacity = #{uavBatteryCapacity},</if>
+            <if test="uavManufacturer != null and uavManufacturer != ''">manufacturer = #{uavManufacturer},</if>
+            <if test="uavStatus != null and uavStatus != ''">status = #{uavStatus},</if>
+            <if test="remark != null and remark != ''">remark = #{remark},</if>
+            create_time = sysdate()
+        </set>
+        where uav_id = #{uavId}
+    </update>
+    
+    <delete id="deleteUavByUavIds" parameterType="Long">
+        delete from uav_info where uav_id in 
+        <foreach item="uavId" collection="array" open="(" separator="," close=")">
+            #{uavId}
+        </foreach>
+    </delete>
+</mapper>

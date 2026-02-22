@@ -170,13 +170,23 @@ const resetQuery = () => {
 //查询数据
 const getList = ()=>{
   selectMenuList(query.value).then(res=>{
+    console.log('原始数据:', res.data);
+    console.log('数据长度:', res.data.length);
+
+    // 检查是否有重复的menuId
+    const menuIds = res.data.map(item => item.menuId);
+    const uniqueIds = [...new Set(menuIds)];
+    console.log('唯一menuId数量:', uniqueIds.length, '总数量:', menuIds.length);
+
     if(query.value.menuName !== null){
       //如果有查询参数，使用深拷贝避免引用问题
       menuList.value = JSON.parse(JSON.stringify(res.data))
     }else{
       //构建树形结构时也使用深拷贝
       const treeData = JSON.parse(JSON.stringify(res.data))
+      console.log('构建前treeData:', treeData);
       menuList.value = buildTree(treeData,0)
+      console.log('构建后menuList:', menuList.value);
     }
   })
 }

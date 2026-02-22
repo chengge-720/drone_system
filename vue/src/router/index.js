@@ -54,20 +54,20 @@ export const constantRouters = [
     ]
   },
   {
-    path: '/droneInfo',
+    path: '/uavInfo',
     component: Layout,
     children: [
       {
         path: 'baseInfo',
-        component: () => import('@/views/droneInfo/baseInfo/index.vue'),
+        component: () => import('@/views/uavInfo/baseInfo/index.vue'),
       },
       {
         path: 'flightInfo',
-        component: () => import('@/views/droneInfo/flightInfo/index.vue'),
+        component: () => import('@/views/uavInfo/flightInfo/index.vue'),
       },
       {
         path: 'taskInfo',
-        component: () => import('@/views/droneInfo/taskInfo/index.vue'),
+        component: () => import('@/views/uavInfo/taskInfo/index.vue'),
       },
     ]
   },
