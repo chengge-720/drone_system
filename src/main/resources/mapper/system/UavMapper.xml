@@ -46,13 +46,13 @@
         order by uav_id asc
     </select>
     
-    <select id="selectUavByUavId" parameterType="Long" resultMap="UavResult">
+    <select id="selectUavByUavId" parameterType="Integer" resultMap="UavResult">
         <include refid="selectUavVo"/>
         where uav_id = #{uavId}
     </select>
     
     <insert id="insertUav" parameterType="Uav" useGeneratedKeys="true" keyProperty="uavId">
-        insert into uav_info
+        insert into uav_base_info
         <trim prefix="(" suffix=")" suffixOverrides=",">
             <if test="uavCode != null and uavCode != ''">uav_code,</if>
             <if test="uavModel != null and uavModel != ''">uav_model,</if>
@@ -82,7 +82,7 @@
     </insert>
     
     <update id="updateUav" parameterType="Uav">
-        update uav_info
+        update uav_base_info
         <set>
             <if test="uavCode != null and uavCode != ''">uav_code = #{uavCode},</if>
             <if test="uavModel != null and uavModel != ''">uav_model = #{uavModel},</if>
@@ -100,7 +100,7 @@
     </update>
     
     <delete id="deleteUavByUavIds" parameterType="Long">
-        delete from uav_info where uav_id in 
+        delete from uav_base_info where uav_id in 
         <foreach item="uavId" collection="array" open="(" separator="," close=")">
             #{uavId}
         </foreach>

@@ -9,7 +9,7 @@ import java.util.Date;
 @Data
 public class Uav {
     //无人机ID
-    private Long uavId;
+    private Integer uavId;
 
     //无人机编号
     private String uavCode;

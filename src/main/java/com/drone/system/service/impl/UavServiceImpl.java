@@ -31,7 +31,7 @@ public class UavServiceImpl implements IUavService {
      * @return 无人机对象信息
      */
     @Override
-    public Uav selectUavByUavId(Long uavId) {
+    public Uav selectUavByUavId(Integer uavId) {
         return uavMapper.selectUavByUavId(uavId);
     }
     
@@ -64,7 +64,7 @@ public class UavServiceImpl implements IUavService {
      * @return 结果
      */
     @Override
-    public int deleteUavByUavIds(Long[] uavIds) {
+    public int deleteUavByUavIds(Integer[] uavIds) {
         return uavMapper.deleteUavByUavIds(uavIds);
     }
 }

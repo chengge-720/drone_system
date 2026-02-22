@@ -19,7 +19,7 @@ public interface IUavService {
      * @param uavId 无人机ID
      * @return 无人机对象信息
      */
-    public Uav selectUavByUavId(Long uavId);
+    public Uav selectUavByUavId(Integer uavId);
     
     /**
      * 新增无人机
@@ -43,5 +43,5 @@ public interface IUavService {
      * @param uavIds 需要删除的无人机ID
      * @return 结果
      */
-    public int deleteUavByUavIds(Long[] uavIds);
+    public int deleteUavByUavIds(Integer[] uavIds);
 }

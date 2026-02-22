@@ -30,7 +30,7 @@ public class UavController extends BaseController{
      * 查询无人机详细信息
      */
     @GetMapping("/selectUavByUavId/{uavId}")
-    public AjaxResult selectUavByUavId(@PathVariable Long uavId) {
+    public AjaxResult selectUavByUavId(@PathVariable Integer uavId) {
         return success(uavService.selectUavByUavId(uavId));
     }
     
@@ -54,7 +54,7 @@ public class UavController extends BaseController{
      * 删除无人机
      */
     @DeleteMapping("/deleteUavByUavIds/{uavIds}")
-    public AjaxResult deleteUavByUavIds(@PathVariable Long[] uavIds) {
+    public AjaxResult deleteUavByUavIds(@PathVariable Integer[] uavIds) {
         return toAjax(uavService.deleteUavByUavIds(uavIds));
     }
 }

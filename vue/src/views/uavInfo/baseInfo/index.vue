@@ -88,18 +88,29 @@ const handleInsert = ()=>{
 const handleUpdate = (row) => {
   const uavId = row.uavId || ids.value
   selectUavByUavId(uavId).then(res => {
+    console.log('查询详情响应:', res)
+    console.log('查询的ID:', uavId)
     form.value = res.data
     open.value = true
     title.value = '修改无人机'
+  }).catch(err => {
+    console.error('查询详情失败:', err)
   })
 }
 
 //删除按钮
 const handleDelete = (row) => {
-  const uavIds = row.uavId || ids.value
+  // 判断是单个删除还是批量删除
+  const isBatchDelete = !row.uavId && ids.value.length > 0
+  const uavIds = row.uavId ? [row.uavId] : ids.value
+  
+  const message = isBatchDelete 
+    ? `是否删除选中的${ids.value.length}架无人机?`
+    : '是否删除该无人机?'
+  
   ElMessageBox.confirm(
-      '是否删除该无人机?',
-      '删除',
+      message,
+      '删除确认',
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
@@ -110,9 +121,16 @@ const handleDelete = (row) => {
         //删除,调用删除api
         deleteUavByUavIds(uavIds).then(res => {
           if(res.code === 200){
-            ElMessage.success('删除成功')
+            ElMessage.success(isBatchDelete ? `成功删除${ids.value.length}架无人机` : '删除成功')
+            // 清空选中状态
+            ids.value = []
+            single.value = true
+            multiple.value = true
             getList()
           }
+        }).catch(err => {
+          console.error('删除失败:', err)
+          ElMessage.error('删除失败，请稍后重试')
         })
       })
 }
@@ -124,6 +142,8 @@ const submitForm = () => {
       if(form.value.uavId != null){
         //修改,调用修改api
         updateUav(form.value).then(res => {
+          console.log('修改响应:', res)
+          console.log('修改发送的数据:', form.value)
           if(res.code === 200){
             ElMessage.success('修改成功')
             open.value = false
@@ -258,7 +278,7 @@ onMounted(()=>{
 
     <!-- 列表 -->
     <el-table :data="uavList" style="width: 100%" border @selection-change="handleSelectionChange">
-      <el-table-column type="selection" width="5" align="center"/>
+      <el-table-column type="selection" width="55" align="center"/>
       <el-table-column prop="uavId" label="无人机ID" width="80" align="center"/>
       <el-table-column prop="uavCode" label="无人机编号" width="120" align="center"/>
       <el-table-column prop="uavModel" label="无人机型号" width="120" align="center"/>

@@ -48,6 +48,20 @@ const sidebarRouters = ref( [
         }
     ]
   },
+  {
+    path: '/uavNavigation',
+    meta: { title: '导航管理' ,icon: '导航管理',hidden: false},
+    children:[
+      {
+        path: 'mapShow',
+        meta: { title: '地图展示' ,icon: '地图展示',hidden: false}
+      },
+      {
+        path: 'routeInfo',
+        meta: { title: '路径信息' ,icon: '路径信息',hidden: false}
+      }
+    ]
+  },
 
 ])
 

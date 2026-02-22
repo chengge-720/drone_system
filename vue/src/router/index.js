@@ -72,6 +72,20 @@ export const constantRouters = [
     ]
   },
   {
+    path: '/uavNavigation',
+    component: Layout,
+    children: [
+      {
+        path: 'mapShow',
+        component: () => import('@/views/uavNavigation/mapShow/index.vue'),
+      },
+      {
+        path: 'routeInfo',
+        component: () => import('@/views/uavNavigation/routeInfo/index.vue'),
+      },
+    ]
+  },
+  {
     path: '/user',
     component: Layout,
     hidden: true,
