@@ -17,7 +17,7 @@ const updateTime = () => {
 <template>
   <div class="dashboard-container">
     <div class="welcome-card">
-      <h1>🚀 无人机路径规划后台管理系统</h1>
+      <h1>无人机路径规划后台管理系统</h1>
       <p>欢迎使用基于强化学习的无人机路径规划系统</p>
       <div class="time-display">
         当前时间: {{ currentTime }}
