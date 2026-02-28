@@ -77,11 +77,11 @@ const resolvePath = (routePath) => {
     <template v-if="shouldShowSingleItem">
       <app-link :to="singleItemPath">
         <el-menu-item :index="singleItemPath">
-          <svg-icon :icon-class="onlyOneChild.meta.icon || (item.meta && item.meta.icon)"
+          <svg-icon v-if="onlyOneChild.meta || item.meta" :icon-class="(onlyOneChild.meta && onlyOneChild.meta.icon) || (item.meta && item.meta.icon)"
                     style="margin-right: 10px"/>
             <template #title>
               <span style="margin-left: 2px">
-                {{onlyOneChild.meta.title}}
+                {{onlyOneChild.meta && onlyOneChild.meta.title || ''}}
               </span>
             </template>
         </el-menu-item>
@@ -91,9 +91,9 @@ const resolvePath = (routePath) => {
     <!-- 当前菜单项需要显示子菜单 -->
     <el-sub-menu v-else :index="resolvePath(item.path)" teleported>
       <template v-if="item.meta" #title>
-        <svg-icon :icon-class="item.meta.icon" style="margin-right: 10px"/>
+        <svg-icon v-if="item.meta && item.meta.icon" :icon-class="item.meta.icon" style="margin-right: 10px"/>
         <span style="margin-left: 2px">
-          {{item.meta.title}}
+          {{item.meta && item.meta.title || ''}}
         </span>
       </template>
       <!-- 递归渲染子项 -->

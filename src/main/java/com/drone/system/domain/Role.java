@@ -23,4 +23,7 @@ public class Role {
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private Date createTime;
 
+    //菜单组
+    private Long[] menuIds;
+
 }

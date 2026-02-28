@@ -2,6 +2,7 @@ package com.drone.system.controller;
 
 import com.drone.system.domain.AjaxResult;
 import com.drone.system.domain.Menu;
+import com.drone.system.domain.vo.RouterVo;
 import com.drone.system.service.IMenuService;
 import com.drone.system.utils.SecurityUtils;
 import jakarta.annotation.Resource;
@@ -79,5 +80,27 @@ public class MenuController extends BaseController {
         //构建前端所需的下拉菜单树形结构
         ajax.put("menus", menuService.buildMenuTreeSelect(menus));
         return ajax;
+    }
+
+    /**
+     * 查询前端所需要的下拉菜单树形结构
+     */
+    @GetMapping("/selectRoleMenusTree")
+    public AjaxResult selectRoleMenusTree() {
+        List<Menu> menus = menuService.selectMenuList(new Menu(), SecurityUtils.getUserId());
+        return success(menuService.buildMenuTreeSelect(menus));
+    }
+
+    /**
+     * 获取路由权限
+     * 获取用户所有的菜单权限，用于前端动态生成路由
+     */
+     @GetMapping("/getRouters")
+    public AjaxResult getRouters() {
+        //获取当前用户ID
+        Long userId = SecurityUtils.getUserId();
+        //根据用户ID查询对应的菜单树路由
+        List<RouterVo> routers = menuService.selectMenuTreeRoutersByUserId(userId);
+        return success(routers);
     }
 }

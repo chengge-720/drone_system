@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 //导入布局组件
 import Layout from '@/views/layout/index.vue'
 
-//路由配置
+//路由配置(静态)
 export const constantRouters = [
   {
     path: '/login',
@@ -21,6 +21,27 @@ export const constantRouters = [
     }
   },
   {
+    path: '/user',
+    component: Layout,
+    hidden: true,
+    children: [
+      {
+        path: 'profile',
+        name: 'Profile',
+        component: () => import('@/views/system/user/profile.vue'),
+        meta: {
+          title: '个人中心'
+        }
+      },
+    ]
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    component: () => import('@/views/404.vue'),
+    hidden: true,
+  },
+  /**
+  {
     path: '/',
     component: Layout,
     redirect: '/index',
@@ -30,11 +51,13 @@ export const constantRouters = [
         component: () => import('@/views/system/index.vue'),
         name: 'Index',
         meta: {
-          title: '首页'
+          title: '首页',
+          icon: '首页',
         }
       },
     ]
   },
+
   {
     path: '/system',
     component: Layout,
@@ -53,6 +76,7 @@ export const constantRouters = [
       },
     ]
   },
+
   {
     path: '/uavInfo',
     component: Layout,
@@ -85,21 +109,8 @@ export const constantRouters = [
       },
     ]
   },
-  {
-    path: '/user',
-    component: Layout,
-    hidden: true,
-    children: [
-      {
-        path: 'profile',
-        name: 'Profile',
-        component: () => import('@/views/system/user/profile.vue'),
-        meta: {
-          title: '个人中心'
-        }
-      },
-    ]
-  },
+   **/
+
 ]
 
 //创建路由器实例

@@ -1,12 +1,24 @@
 <script setup lang="ts">
 //计算当前高亮菜单项
-import {computed, ref} from "vue";
+import {computed, onMounted, ref} from "vue";
 import {useRoute} from "vue-router";
 import SidebarItem from "@/views/layout/components/Sidebar/SidebarItem.vue";
+import useRouteStore from "@/stores/modules/routeStore.js";
 
 const route = useRoute();
 
-//模拟数据
+const routeStore = useRouteStore();
+
+//路由数据(动态)
+const sidebarRouters = computed(() => routeStore.sidebarRouters);
+
+//查询动态路由数据
+onMounted(()=>{
+  console.log('获取路由数据',sidebarRouters.value)
+})
+
+//模拟数据(静态)
+/**
 const sidebarRouters = ref( [
   {
     path: '/index',
@@ -64,6 +76,7 @@ const sidebarRouters = ref( [
   },
 
 ])
+ */
 
 const activeMenu = computed(()=>{
   //从当前路由对象中解构数据

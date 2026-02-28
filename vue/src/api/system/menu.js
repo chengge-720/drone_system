@@ -51,3 +51,19 @@ export function selectRoleMenuTree(roleId) {
   })
 }
 
+//查询前端所需的菜单下拉树结构
+export function selectRoleMenusTree() {
+  return request({
+    url: '/system/menu/selectRoleMenusTree',
+    method: 'get',
+  })
+}
+
+//根据用户ID查询菜单路由树
+export function getRouters(){
+  return request({
+    url: '/system/menu/getRouters',
+    method: 'get',
+  })
+}
+

@@ -2,7 +2,7 @@
 //角色列表数据
 import {nextTick, onMounted, ref} from "vue";
 import {selectRoleList, selectRoleByRoleId ,insertRole ,updateRole ,deleteRoleByRoleIds} from "@/api/system/role.js";
-import {selectRoleMenuTree} from "@/api/system/menu.js";
+import {selectRoleMenuTree,selectRoleMenusTree} from "@/api/system/menu.js";
 import Pagination from "@/components/Pagination/index.vue";
 import {VxeModal} from "vxe-pc-ui";
 import {ElMessage, ElMessageBox} from "element-plus";
@@ -48,8 +48,14 @@ const handleInsert = () => {
     roleSort: null,
     menuIds: []
   }
-  open.value = true
-  title.value = '添加角色'
+  selectRoleMenusTree().then(res => {
+    menuOptions.value = res.data
+    //获取树形结构菜单数据
+    open.value = true
+    title.value = '添加角色'
+  })
+
+
 }
 
 //修改按钮
@@ -64,7 +70,15 @@ const handleUpdate = (row) => {
     roleSort: null,
     menuIds: []
   }
-  const roleId = row.roleId || ids.value
+  // 确保只使用单个角色ID，避免传递数组导致400错误
+  const roleId = row.roleId || (ids.value.length === 1 ? ids.value[0] : null)
+  
+  // 如果没有有效的角色ID，给出提示
+  if (!roleId) {
+    ElMessage.warning('请选择一个角色进行修改')
+    return
+  }
+  
   //根据角色ID查询菜单树
   const roleMenu = getRoleMenuTreeSelect(roleId)
   selectRoleByRoleId(roleId).then(res => {
@@ -93,6 +107,8 @@ const submitForm = () => {
   roleRef.value.validate(valid => {
     if (valid) {
       if(form.value.roleId != null){
+        //修改,设置选中的菜单ID
+        form.value.menuIds = getMenuAllCheckedKeys()
         //修改,调用修改api
         updateRole(form.value).then(res => {
           ElMessage.success('修改成功')
@@ -100,6 +116,8 @@ const submitForm = () => {
           getList()
         })
       }else{
+        form.value.menuIds = getMenuAllCheckedKeys()
+        console.log(form.value,'保存数据')
         //新增,调用新增api
         insertRole(form.value).then(res => {
           ElMessage.success('保存成功')
@@ -109,6 +127,18 @@ const submitForm = () => {
       }
     }
   })
+}
+
+//获取所有已选的菜单ID
+const getMenuAllCheckedKeys = () => {
+  //获取全选中的菜单ID
+  let checkedKeys = menuRef.value.getCheckedKeys()
+  //获取半选的菜单ID
+  let halfCheckedKeys = menuRef.value.getHalfCheckedKeys()
+  //将半选的菜单ID添加到已选的菜单ID数组中
+  checkedKeys.unshift.apply(checkedKeys, halfCheckedKeys)
+  //返回所有选择的菜单ID
+  return checkedKeys
 }
 
 //获取树形结构菜单数据
@@ -128,10 +158,23 @@ const getRoleMenuTreeSelect = (roleId) => {
 
 //删除按钮
 const handleDelete = (row) => {
-  const roleIds = row.roleId || ids.value
+  // 处理删除的roleIds，确保正确的数据类型
+  let roleIds =  []
+  if (row.roleId) {
+    // 单行删除
+    roleIds = row.roleId
+  } else if (ids.value && ids.value.length > 0) {
+    // 多选删除
+    roleIds = ids.value
+  } else {
+    ElMessage.warning('请至少选择一个角色进行删除')
+    return
+  }
 
+  const message = Array.isArray(roleIds) ? `是否删除选中的${roleIds.length}个角色?` : '是否删除该角色?'
+  
   ElMessageBox.confirm(
-      '是否删除该角色?',
+      message,
       '删除',
       {
         confirmButtonText: '确定',

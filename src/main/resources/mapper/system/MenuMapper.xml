@@ -30,7 +30,7 @@
                 and m.menu_name like concat('%', #{menuName}, '%')
             </if>
         </where>
-        order by m.parent_id, m.menu_sort
+        order by m.menu_sort
     </select>
 
     <!-- 根据菜单ID查询菜单详情 -->
