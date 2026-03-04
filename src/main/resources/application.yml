@@ -59,3 +59,11 @@ pagehelper:
   support-methods-arguments: true
   #shi yong count cha xun huo qu de shu ju zon shu
   params: count=countSql
+
+# Doubao AI Configuration
+# 请在下方配置您的豆包 API Key
+doubao:
+  api:
+    key: 48045617-a77e-495d-998a-770c408a1a3e
+    url: https://ark.cn-beijing.volces.com/api/v3/chat/completions
+    model: ep-20260304201511-km522

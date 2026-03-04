@@ -109,6 +109,27 @@ export const constantRouters = [
       },
     ]
   },
+  // AI 助手路由
+  {
+  path: '/aiAssistant',
+  component: Layout,
+  redirect: '/aiAssistant/index',
+  meta: {
+  title: 'AI 助手',
+  icon: 'chat-dot-round',
+  },
+  children: [
+  {
+  path: 'index',
+  component: () => import('@/views/aiAssistant/index.vue'),
+  name: 'AiChat',
+  meta: {
+  title: 'AI 聊天',
+  icon: 'chat-line-square',
+  }
+  },
+  ]
+  },
    **/
 
 ]
