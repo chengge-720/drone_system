@@ -88,7 +88,7 @@ const activeMenu = computed(()=>{
 
 <template>
   <el-scrollbar>
-    <el-menu :default-active="activeMenu" class="sidebar-menu">
+    <el-menu :default-active="activeMenu" class="sidebar-menu" router>
       <sidebar-item v-for="(route, index) in sidebarRouters"
                     :key="route.path + index"
                     :item="route"
@@ -99,21 +99,86 @@ const activeMenu = computed(()=>{
 
 <style scoped>
 .sidebar-menu{
-  padding: 8px 0;
+  padding: 12px 0;
   border-right: none;
+  background-color: var(--card-background);
+  height: 100%;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.08);
 }
 
 .sidebar-menu :deep(.el-menu-item){
-
-  border-radius: 4px;
+  border-radius: 8px;
   height: 55px;
+  margin: 0 12px 8px 12px;
+  transition: var(--transition);
+}
+
+.sidebar-menu :deep(.el-menu-item):hover{
+  background-color: rgba(77, 79, 200, 0.05) !important;
+  color: var(--primary-color);
+  transform: translateX(4px);
 }
 
 .sidebar-menu :deep(.el-menu-item).is-active{
-  background: var(--el-color-primary) !important;
+  background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)) !important;
   color: white;
   position: relative;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
   border-radius: 8px;
+  transform: translateX(4px);
+}
+
+.sidebar-menu :deep(.el-menu-item).is-active::before{
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 30px;
+  background-color: var(--accent-color);
+  border-radius: 0 2px 2px 0;
+}
+
+.sidebar-menu :deep(.el-sub-menu__title){
+  border-radius: 8px;
+  height: 55px;
+  margin: 0 12px 8px 12px;
+  transition: var(--transition);
+}
+
+.sidebar-menu :deep(.el-sub-menu__title):hover{
+  background-color: rgba(77, 79, 200, 0.05) !important;
+  color: var(--primary-color);
+  transform: translateX(4px);
+}
+
+.sidebar-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title){
+  background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)) !important;
+  color: white;
+  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
+  transform: translateX(4px);
+}
+
+.sidebar-menu :deep(.el-sub-menu.is-active > .el-sub-menu__title)::before{
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 30px;
+  background-color: var(--accent-color);
+  border-radius: 0 2px 2px 0;
+}
+
+.sidebar-menu :deep(.el-sub-menu .el-menu){
+  background-color: transparent;
+  padding: 0;
+}
+
+.sidebar-menu :deep(.el-sub-menu .el-menu-item){
+  margin: 4px 12px;
+  padding-left: 32px !important;
 }
 </style>

@@ -186,74 +186,67 @@ onMounted(()=>{
 <template>
   <div class="app-container">
     <h1>用户管理</h1>
-    <!--顶部搜索-->
-    <el-form :model="query" ref="queryRef" label-width="70px" inline>
-      <el-form-item label="用户名称" prop="userName">
-        <el-input v-model="query.userName" placeholder="请输入用户名称"/>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
-        <el-button icon="Refresh" @click="resetQuery">清空</el-button>
-            <!--顶部按钮-->
-            <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
-            <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate">修改</el-button>
-            <el-button :disabled="multiple" type="danger" icon="Delete" @click="handleDelete">批量删除</el-button>
-      </el-form-item>
-    </el-form>
-
-    <!--新增按钮
-    <el-row :gutter="10" class="mb8">
-      <el-col :span="1.5">
-        <el-button type="primary" plain icon="Plus" @click="">新增</el-button>
-      </el-col>
-      <el-col :span="1.5">
-        <el-button type="success" plain icon="Edit" @click="">修改</el-button>
-      </el-col>
-      <el-col :span="1.5">
-        <el-button type="danger" icon="Delete" @click="">批量删除</el-button>
-      </el-col>
-    </el-row>
-
-    -->
-
+    <!--顶部搜索和按钮-->
+    <div class="card fade-in">
+      <div class="search-container">
+        <el-form :model="query" ref="queryRef" label-width="70px" inline class="search-form">
+          <el-form-item label="用户名称" prop="userName">
+            <el-input v-model="query.userName" placeholder="请输入用户名称" class="search-input"/>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" icon="Search" @click="handleQuery" class="search-button">搜索</el-button>
+            <el-button icon="Refresh" @click="resetQuery" class="reset-button">清空</el-button>
+          </el-form-item>
+        </el-form>
+        <div class="action-buttons">
+          <el-button type="primary" icon="Plus" @click="handleInsert" class="action-button primary">新增</el-button>
+          <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate" class="action-button success">修改</el-button>
+          <el-button :disabled="multiple" type="danger" icon="Delete" @click="handleDelete" class="action-button danger">批量删除</el-button>
+        </div>
+      </div>
+    </div>
 
     <!-- 列表 -->
-    <el-table :data="userList" style="width: 100%" border @selection-change="handleSelectionChange">
-      <el-table-column type="selection" width="80" align="center"/>
-      <el-table-column prop="userId" label="用户编号" width="180" align="center"/>
-      <el-table-column prop="userName" label="用户名称" align="center"/>
-      <el-table-column prop="roleName" label="角色名称" align="center">
+    <div class="card fade-in" style="margin-top: 20px;">
+      <el-table :data="userList" style="width: 100%" border @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="80" align="center"/>
+        <el-table-column prop="userId" label="用户编号" width="180" align="center"/>
+        <el-table-column prop="userName" label="用户名称" align="center"/>
+        <el-table-column prop="roleName" label="角色名称" align="center">
+            <template #default="scope">
+              <span v-if="scope.row.roleId === 1" class="role-badge admin">管理员</span>
+              <span v-else-if="scope.row.roleId === 2" class="role-badge user">普通用户</span>
+            </template>
+        </el-table-column>
+          <el-table-column prop="sex" label="性别" align="center">
+            <template #default="scope">
+              <span v-if="scope.row.sex === 0" class="sex-badge male">男</span>
+              <span v-else-if="scope.row.sex === 1" class="sex-badge female">女</span>
+              <span v-else class="sex-badge unknown">未设置</span>
+            </template>
+          </el-table-column>
+        <el-table-column prop="avatar" label="头像" align="center">
           <template #default="scope">
-            <span v-if="scope.row.roleId === 1">管理员</span>
-            <span v-else-if="scope.row.roleId === 2">普通用户</span>
-          </template>
-      </el-table-column>
-        <el-table-column prop="sex" label="性别" align="center">
-          <template #default="scope">
-            <span v-if="scope.row.sex === 0">男</span>
-            <span v-else-if="scope.row.sex === 1">女</span>
-            <span v-else>未设置</span>
+            <el-avatar :size="50" :src="scope.row.avatar? baseUrl + scope.row.avatar : defaultAvatar " />
           </template>
         </el-table-column>
-      <el-table-column prop="avatar" label="头像" align="center">
-        <template #default="scope">
-          <el-avatar :size="50" :src="scope.row.avatar? baseUrl + scope.row.avatar : defaultAvatar " />
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" align="center" width="180">
-        <template #default="scope">
-          <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
-          <el-button link type="danger" icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+        <el-table-column label="操作" align="center" width="180">
+          <template #default="scope">
+            <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
+            <el-button link type="danger" icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
 
     <!-- 分页 -->
-    <pagination :total="total"
-                v-model:page="query.pageNum"
-                v-model:limit="query.pageSize"
-                @pagination="getList"
-    />
+    <div class="fade-in" style="margin-top: 20px;">
+      <pagination :total="total"
+                  v-model:page="query.pageNum"
+                  v-model:limit="query.pageSize"
+                  @pagination="getList"
+      />
+    </div>
 
     <!-- 添加用户管理框 -->
     <vxe-modal :title="title" width="500px" v-model="open" showFooter show-maximize resize>
@@ -289,6 +282,168 @@ onMounted(()=>{
 
   </div>
 </template>
+
+<style scoped>
+/* 搜索和按钮容器样式 */
+.search-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.search-form {
+  flex: 1;
+  min-width: 300px;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 搜索输入框样式 */
+.search-input {
+  width: 300px;
+  border-radius: 8px;
+  transition: var(--transition);
+}
+
+.search-input:focus {
+  box-shadow: 0 0 0 2px rgba(77, 79, 200, 0.2);
+}
+
+/* 搜索按钮样式 */
+.search-button {
+  border-radius: 8px;
+  font-weight: 500;
+  transition: var(--transition);
+}
+
+.search-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
+}
+
+/* 重置按钮样式 */
+.reset-button {
+  border-radius: 8px;
+  transition: var(--transition);
+}
+
+.reset-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* 操作按钮样式 */
+.action-button {
+  border-radius: 8px;
+  font-weight: 500;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.action-button.primary:hover {
+  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
+}
+
+.action-button.success:hover {
+  box-shadow: 0 4px 12px rgba(102, 187, 106, 0.3);
+}
+
+.action-button.danger:hover {
+  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+}
+
+/* 角色和性别徽章样式 */
+.role-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: var(--transition);
+}
+
+.role-badge.admin {
+  background-color: rgba(77, 79, 200, 0.1);
+  color: var(--primary-color);
+}
+
+.role-badge.user {
+  background-color: rgba(102, 187, 106, 0.1);
+  color: #66bb6a;
+}
+
+.sex-badge {
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: var(--transition);
+}
+
+.sex-badge.male {
+  background-color: rgba(33, 150, 243, 0.1);
+  color: #2196f3;
+}
+
+.sex-badge.female {
+  background-color: rgba(244, 67, 54, 0.1);
+  color: #f44336;
+}
+
+.sex-badge.unknown {
+  background-color: rgba(158, 158, 158, 0.1);
+  color: #9e9e9e;
+}
+
+/* 动画延迟效果 */
+.fade-in {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+.fade-in:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.fade-in:nth-child(3) {
+  animation-delay: 0.2s;
+}
+
+.fade-in:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .search-container {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .search-form {
+    width: 100%;
+  }
+  
+  .search-input {
+    width: 100%;
+  }
+  
+  .action-buttons {
+    justify-content: center;
+  }
+}
+</style>
 
 <style scoped>
 

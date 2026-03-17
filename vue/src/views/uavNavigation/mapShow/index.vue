@@ -25,7 +25,7 @@ onMounted(()=>{
 
 <style scoped>
 .map-info{
-  width: 100%; /* 自定义大小 */
-  height: 100%; /* 自定义大小 */
+  width: 800px; /* 自定义大小 */
+  height: 400px; /* 自定义大小 */
 }
 </style>

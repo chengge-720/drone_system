@@ -1,14 +1,186 @@
 /**
 通用样式代码
  */
-a{
-    text-decoration: none;
+:root {
+  --primary-color: #4d4fc8;
+  --secondary-color: #6c63ff;
+  --accent-color: #d6c571;
+  --text-color: #333;
+  --light-text: #666;
+  --background-color: #f5f7fa;
+  --card-background: #fff;
+  --border-radius: 8px;
+  --box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  --transition: all 0.3s ease;
 }
 
-.app-container{
-    padding: 20px;
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-.mb8{
-    margin-bottom: 8px;
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: var(--background-color);
+  color: var(--text-color);
+  line-height: 1.6;
+}
+
+a {
+  text-decoration: none;
+  color: var(--primary-color);
+  transition: var(--transition);
+}
+
+a:hover {
+  color: var(--secondary-color);
+}
+
+.app-container {
+  padding: 24px;
+  min-height: calc(100vh - 60px);
+}
+
+.mb8 {
+  margin-bottom: 8px;
+}
+
+/* 标题样式 */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-color);
+}
+
+h1 {
+  font-size: 28px;
+  position: relative;
+  display: inline-block;
+}
+
+h1::after {
+  content: '';
+  position: absolute;
+  bottom: -8px;
+  left: 0;
+  width: 60px;
+  height: 3px;
+  background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+  border-radius: 3px;
+}
+
+/* 卡片样式 */
+.card {
+  background: var(--card-background);
+  border-radius: var(--border-radius);
+  box-shadow: var(--box-shadow);
+  padding: 20px;
+  margin-bottom: 20px;
+  transition: var(--transition);
+}
+
+.card:hover {
+  box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+/* 按钮样式 */
+.el-button {
+  transition: var(--transition);
+}
+
+.el-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(77, 79, 200, 0.3);
+}
+
+/* 表格样式 */
+.el-table {
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.el-table th {
+  background-color: #f8f9fa !important;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.el-table tr {
+  transition: var(--transition);
+}
+
+.el-table tr:hover {
+  background-color: #f8f9fa !important;
+}
+
+/* 表单样式 */
+.el-form-item {
+  margin-bottom: 16px;
+}
+
+.el-input, .el-select, .el-radio-group, .el-checkbox-group {
+  width: 100%;
+}
+
+/* 动画效果 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+/* 艺术字效果 */
+.art-text {
+  font-family: 'Microsoft YaHei', Arial, sans-serif;
+  font-weight: bold;
+  background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  position: relative;
+  display: inline-block;
+}
+
+.art-text::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.3s ease;
+}
+
+.art-text:hover::after {
+  transform: scaleX(1);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .app-container {
+    padding: 16px;
+  }
+  
+  h1 {
+    font-size: 24px;
+  }
+  
+  .card {
+    padding: 16px;
+  }
 }

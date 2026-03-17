@@ -251,18 +251,25 @@ onMounted(()=>{
 <template>
 <div class="app-container">
     <h1>角色管理</h1>
-    <!--顶部搜索-->
-    <el-form :model="query" ref="queryRef" label-width="70px" inline>
-      <el-form-item label="角色名称" prop="roleName">
-        <el-input v-model="query.roleName" placeholder="请输入角色名称"/>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
-        <el-button icon="Refresh" @click="resetQuery">清空</el-button>
-        <!--顶部按钮-->
-        <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
-      </el-form-item>
-    </el-form>
+    <!--顶部搜索和按钮-->
+    <div class="card fade-in">
+      <div class="search-container">
+        <el-form :model="query" ref="queryRef" label-width="70px" inline class="search-form">
+          <el-form-item label="角色名称" prop="roleName">
+            <el-input v-model="query.roleName" placeholder="请输入角色名称" class="search-input"/>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" icon="Search" @click="handleQuery" class="search-button">搜索</el-button>
+            <el-button icon="Refresh" @click="resetQuery" class="reset-button">清空</el-button>
+          </el-form-item>
+        </el-form>
+        <div class="action-buttons">
+          <el-button type="primary" icon="Plus" @click="handleInsert" class="action-button primary">新增</el-button>
+          <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate" class="action-button success">修改</el-button>
+          <el-button :disabled="multiple" type="danger" icon="Delete" @click="handleDelete" class="action-button danger">批量删除</el-button>
+        </div>
+      </div>
+    </div>
 
     <!-- 列表 -->
     <el-table :data="roleList" style="width: 100%" border @selection-change="handleSelectionChange">
@@ -318,5 +325,121 @@ onMounted(()=>{
 </template>
 
 <style scoped>
+/* 搜索和按钮容器样式 */
+.search-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
 
+.search-form {
+  flex: 1;
+  min-width: 300px;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 搜索输入框样式 */
+.search-input {
+  width: 300px;
+  border-radius: 8px;
+  transition: var(--transition);
+}
+
+.search-input:focus {
+  box-shadow: 0 0 0 2px rgba(77, 79, 200, 0.2);
+}
+
+/* 搜索按钮样式 */
+.search-button {
+  border-radius: 8px;
+  font-weight: 500;
+  transition: var(--transition);
+}
+
+.search-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
+}
+
+/* 重置按钮样式 */
+.reset-button {
+  border-radius: 8px;
+  transition: var(--transition);
+}
+
+.reset-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* 操作按钮样式 */
+.action-button {
+  border-radius: 8px;
+  font-weight: 500;
+  transition: var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.action-button.primary:hover {
+  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
+}
+
+.action-button.success:hover {
+  box-shadow: 0 4px 12px rgba(102, 187, 106, 0.3);
+}
+
+.action-button.danger:hover {
+  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
+}
+
+/* 动画延迟效果 */
+.fade-in {
+  animation: fadeIn 0.5s ease-in-out;
+}
+
+.fade-in:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.fade-in:nth-child(3) {
+  animation-delay: 0.2s;
+}
+
+.fade-in:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .search-container {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .search-form {
+    width: 100%;
+  }
+  
+  .search-input {
+    width: 100%;
+  }
+  
+  .action-buttons {
+    justify-content: center;
+  }
+}
 </style>
