@@ -393,20 +393,47 @@ const calculatePathWithBaiduMap = (start, end) => {
           const plan = results.getPlan(0)
           const route = plan.getRoute(0)
           
-          // 提取路径点
-          pathPoints.value = []
-          for (let i = 0; i < route.getNumPoints(); i++) {
-            const point = route.getPoint(i)
-            pathPoints.value.push({
-              lng: point.lng,
-              lat: point.lat
-            })
+          // 使用 route.getPath() 方法获取路径点
+          const points = route.getPath()
+          console.log('📍 百度地图返回的路径点数量:', points.length)
+          
+          if (points.length === 0) {
+            console.error('❌ 未能获取到任何路径点！')
+            ElMessage.error('无法获取路径数据')
+            reject(new Error('百度地图返回空路径'))
+            return
           }
           
-          console.log('📍 百度地图返回的路径点数量:', pathPoints.value.length)
+          // 提取路径点到 pathPoints.value
+          pathPoints.value = []
+          for (let i = 0; i < points.length; i++) {
+            const point = points[i]
+            
+            // 确保正确获取经纬度
+            let lng, lat
+            if (typeof point.lng === 'number') {
+              lng = point.lng
+              lat = point.lat
+            } else if (typeof point.getLongitude === 'function') {
+              lng = point.getLongitude()
+              lat = point.getLatitude()
+            } else {
+              lng = point.lng
+              lat = point.lat
+            }
+            
+            if (lng !== undefined && lat !== undefined && !isNaN(lng) && !isNaN(lat)) {
+              pathPoints.value.push({
+                lng: Number(lng),
+                lat: Number(lat)
+              })
+            }
+          }
+          
+          console.log('✅ 提取完成，路径点数量:', pathPoints.value.length)
           if (pathPoints.value.length > 0) {
-            console.log('📍 第一个点:', pathPoints.value[0])
-            console.log('📍 最后一个点:', pathPoints.value[pathPoints.value.length - 1])
+            console.log('📍 第一个点:', JSON.stringify(pathPoints.value[0]))
+            console.log('📍 最后一个点:', JSON.stringify(pathPoints.value[pathPoints.value.length - 1]))
           }
           
           // 调整地图视野
