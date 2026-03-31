@@ -42,3 +42,12 @@ export function deleteUavByUavIds(uavIds){
         method:"delete",
     })
 }
+
+//路径规划
+export function planPath(data){
+    return request({
+        url:"/uavInfo/pathPlanning/planPath",
+        method:"post",
+        data: data
+    })
+}
