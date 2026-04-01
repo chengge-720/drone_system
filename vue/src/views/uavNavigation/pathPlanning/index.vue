@@ -21,12 +21,30 @@ const endMarker = ref(null)
 const uavMarker = ref(null)
 const flyInterval = ref(null)
 
+// 路径对比相关
+const compareResults = ref(null) // 存储对比结果
+const showComparePanel = ref(false) // 是否显示对比面板
+
 // 2D 路径规划相关
 const flowAnimationRef = ref(null) // 流光动画引用
 const uavIconMarker = ref(null) // 无人机图标标记
 const animationStartTime = ref(0) // 动画开始时间
 const animationDuration = ref(3000) // 动画持续时间（毫秒）
 const flatPathCoords = ref([]) // 扁平化的路径坐标
+
+// 路径参数可视化
+const showPathInfo = ref(false) // 是否显示路径信息面板
+const pathStats = ref({
+  totalDistance: 0, // 总距离（米）
+  estimatedTime: 0, // 预计时间（秒）
+  pointCount: 0, // 坐标点数
+  avgSpeed: 10, // 平均速度（m/s）
+  startCoord: '', // 起点坐标
+  endCoord: '' // 终点坐标
+})
+const chartContainer = ref(null)
+let distanceChart = null
+let elevationChart = null
 
 // Three.js相关
 const threeScene = ref(null)
@@ -301,8 +319,9 @@ const calculatePathByApi = async (start, end) => {
       return
     }
     
-    // 3D模式下使用后端算法
-    console.log('🗺️ 3D模式：使用后端算法规划')
+    // 3D模式下使用后端算法 - 并行执行 A*和 Dijkstra 进行对比
+    console.log('🗺️ 3D模式：并行执行 A*和 Dijkstra 算法进行对比')
+    
     const requestData = {
       startLng: start.lng,
       startLat: start.lat,
@@ -316,18 +335,54 @@ const calculatePathByApi = async (start, end) => {
     
     console.log('🗺️ 请求后端 API，参数:', requestData)
     
-    const response = await apiPlanPath(requestData)
-    console.log('📡 后端 API 响应:', response)
+    // 并行执行两个算法
+    const astarRequest = { ...requestData, algorithm: 1 }
+    const dijkstraRequest = { ...requestData, algorithm: 2 }
     
-    if (response.code === 200 && response.data.success) {
-      const pathData = response.data
-      console.log('✅ 路径规划成功，数据:', pathData)
+    const [astarResponse, dijkstraResponse] = await Promise.all([
+      apiPlanPath(astarRequest),
+      apiPlanPath(dijkstraRequest)
+    ])
+    
+    console.log('📡 A*算法响应:', astarResponse)
+    console.log('📡 Dijkstra 算法响应:', dijkstraResponse)
+    
+    // 存储对比结果
+    if (astarResponse.code === 200 && dijkstraResponse.code === 200) {
+      const astarData = astarResponse.data
+      const dijkstraData = dijkstraResponse.data
+      
+      compareResults.value = {
+        astar: {
+          name: 'A*算法',
+          distance: astarData.totalDistance,
+          time: astarData.estimatedTime,
+          points: astarData.pathPoints.length,
+          pathPoints: astarData.pathPoints
+        },
+        dijkstra: {
+          name: '迪杰斯特拉算法',
+          distance: dijkstraData.totalDistance,
+          time: dijkstraData.estimatedTime,
+          points: dijkstraData.pathPoints.length,
+          pathPoints: dijkstraData.pathPoints
+        },
+        recommendation: null
+      }
+      
+      // 分析并推荐最佳路径
+      analyzeAndRecommend()
+      
+      // 显示对比面板
+      showComparePanel.value = true
+      
+      // 使用用户选择的算法的路径
+      const selectedData = selectedAlgorithm.value === 'A*算法' ? astarData : dijkstraData
       
       // 提取路径点
       pathPoints.value = []
-      if (pathData.pathPoints && pathData.pathPoints.length > 0) {
-        pathData.pathPoints.forEach((point, index) => {
-          console.log(`点 ${index}:`, point)
+      if (selectedData.pathPoints && selectedData.pathPoints.length > 0) {
+        selectedData.pathPoints.forEach((point, index) => {
           pathPoints.value.push({
             lng: point.lng,
             lat: point.lat
@@ -335,26 +390,16 @@ const calculatePathByApi = async (start, end) => {
         })
         
         console.log('✅ 后端返回的路径点数量:', pathPoints.value.length)
-        console.log('✅ 第一个点:', pathPoints.value[0])
-        console.log('✅ 最后一个点:', pathPoints.value[pathPoints.value.length - 1])
         
-        // 调整地图视野以包含整个路径
+        // 调整地图视野
         if (pathPoints.value.length > 0) {
           const startPoint = pathPoints.value[0]
           const endPoint = pathPoints.value[pathPoints.value.length - 1]
           
-          // 创建一个包含起点和终点的边界
-          if (is3DMode.value) {
-            map.value.centerAndZoom(new BMapGL.Point(
-              (startPoint.lng + endPoint.lng) / 2,
-              (startPoint.lat + endPoint.lat) / 2
-            ), 15)
-          } else {
-            map.value.centerAndZoom(new BMap.Point(
-              (startPoint.lng + endPoint.lng) / 2,
-              (startPoint.lat + endPoint.lat) / 2
-            ), 15)
-          }
+          map.value.centerAndZoom(new BMap.Point(
+            (startPoint.lng + endPoint.lng) / 2,
+            (startPoint.lat + endPoint.lat) / 2
+          ), 15)
         }
         
         // 模拟无人机飞行
@@ -365,12 +410,75 @@ const calculatePathByApi = async (start, end) => {
         ElMessage.error('路径规划失败：未找到有效路径')
       }
     } else {
-      console.error('❌ 路径规划失败:', response)
-      ElMessage.error('路径规划失败：' + (response.message || '未知错误'))
+      console.error('❌ 路径规划失败')
+      ElMessage.error('路径规划失败')
     }
   } catch (error) {
     console.error('❌ 调用后端 API 失败:', error)
     ElMessage.error('路径规划失败：' + (error as Error).message)
+  }
+}
+
+// 分析并推荐最佳路径
+const analyzeAndRecommend = () => {
+  if (!compareResults.value) return
+  
+  const { astar, dijkstra } = compareResults.value
+  
+  // 综合评分（距离权重 60%，时间权重 30%，点数权重 10%）
+  const astarScore = (
+    astar.distance * 0.6 +
+    astar.time * 0.3 +
+    astar.points * 0.1
+  )
+  
+  const dijkstraScore = (
+    dijkstra.distance * 0.6 +
+    dijkstra.time * 0.3 +
+    dijkstra.points * 0.1
+  )
+  
+  // 归一化评分（越小越好）
+  const astarNormalized = astarScore / (astarScore + dijkstraScore)
+  const dijkstraNormalized = dijkstraScore / (astarScore + dijkstraScore)
+  
+  // 生成推荐理由
+  let reason = []
+  
+  if (astar.distance < dijkstra.distance) {
+    reason.push(`A*距离更短（-${Math.round(dijkstra.distance - astar.distance)}米）`)
+  } else if (dijkstra.distance < astar.distance) {
+    reason.push(`Dijkstra 距离更短（-${Math.round(astar.distance - dijkstra.distance)}米）`)
+  } else {
+    reason.push('距离相同')
+  }
+  
+  if (astar.time < dijkstra.time) {
+    reason.push(`A*时间更省（-${dijkstra.time - astar.time}秒）`)
+  } else if (dijkstra.time < astar.time) {
+    reason.push(`Dijkstra 时间更省（-${astar.time - dijkstra.time}秒）`)
+  } else {
+    reason.push('时间相同')
+  }
+  
+  if (astar.points < dijkstra.points) {
+    reason.push(`A*路径更简洁（少${dijkstra.points - astar.points}个点）`)
+  } else if (dijkstra.points < astar.points) {
+    reason.push(`Dijkstra 路径更简洁（少${astar.points - dijkstra.points}个点）`)
+  } else {
+    reason.push('路径点数相同')
+  }
+  
+  // 推荐最佳路径
+  const recommended = astarNormalized < dijkstraNormalized ? 'astar' : 'dijkstra'
+  
+  compareResults.value.recommendation = {
+    algorithm: recommended === 'astar' ? 'A*算法' : '迪杰斯特拉算法',
+    score: recommended === 'astar' ? astarNormalized : dijkstraNormalized,
+    reasons: reason,
+    advantages: recommended === 'astar' ? 
+      ['综合评分更优', ...reason.filter(r => r.includes('A*'))] :
+      ['综合评分更优', ...reason.filter(r => r.includes('Dijkstra'))]
   }
 }
 
@@ -495,14 +603,167 @@ const simulateFlight2D = () => {
     return
   }
   
-  // 2. 绘制流光路线
+  // 2. 计算路径参数
+  calculatePathStats()
+  
+  // 3. 显示路径信息面板
+  showPathInfo.value = true
+  setTimeout(() => {
+    initCharts()
+  }, 100)
+  
+  // 4. 绘制流光路线
   drawFlowPolyline()
   
-  // 3. 创建无人机图标标记
+  // 5. 创建无人机图标标记
   createUavIconMarker()
   
-  // 4. 启动插值动画
+  // 6. 启动插值动画
   startInterpolationAnimation()
+}
+
+// 计算路径统计参数
+const calculatePathStats = () => {
+  if (flatPathCoords.value.length < 2) return
+  
+  let totalDistance = 0
+  
+  // 计算总距离（使用 Haversine 公式）
+  for (let i = 1; i < flatPathCoords.value.length; i++) {
+    const prev = flatPathCoords.value[i - 1]
+    const curr = flatPathCoords.value[i]
+    totalDistance += getDistanceFromLatLonInMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+  }
+  
+  const avgSpeed = pathStats.value.avgSpeed // 默认 10 m/s
+  const estimatedTime = totalDistance / avgSpeed
+  
+  pathStats.value = {
+    totalDistance: Math.round(totalDistance),
+    estimatedTime: Math.round(estimatedTime),
+    pointCount: flatPathCoords.value.length,
+    avgSpeed: avgSpeed,
+    startCoord: `${flatPathCoords.value[0].lat.toFixed(6)}, ${flatPathCoords.value[0].lng.toFixed(6)}`,
+    endCoord: `${flatPathCoords.value[flatPathCoords.value.length - 1].lat.toFixed(6)}, ${flatPathCoords.value[flatPathCoords.value.length - 1].lng.toFixed(6)}`
+  }
+}
+
+// Haversine 公式计算两点间距离
+const getDistanceFromLatLonInMeters = (lat1, lon1, lat2, lon2) => {
+  const R = 6371000 // 地球半径（米）
+  const dLat = deg2rad(lat2 - lat1)
+  const dLon = deg2rad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+const deg2rad = (deg) => {
+  return deg * (Math.PI / 180)
+}
+
+// 初始化图表
+const initCharts = () => {
+  if (!chartContainer.value || flatPathCoords.value.length === 0) return
+  
+  // 动态导入 ECharts
+  import('echarts').then((echarts) => {
+    // 距离累积图
+    const distances = [0]
+    for (let i = 1; i < flatPathCoords.value.length; i++) {
+      const prev = flatPathCoords.value[i - 1]
+      const curr = flatPathCoords.value[i]
+      const dist = getDistanceFromLatLonInMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+      distances.push(distances[i - 1] + dist)
+    }
+    
+    // 创建距离图表
+    if (distanceChart) {
+      distanceChart.dispose()
+    }
+    
+    distanceChart = echarts.default.init(chartContainer.value)
+    
+    const option = {
+      title: {
+        text: '路径距离累积曲线',
+        left: 'center',
+        textStyle: {
+          color: '#333',
+          fontSize: 14,
+          fontWeight: 'bold'
+        }
+      },
+      tooltip: {
+        trigger: 'axis',
+        formatter: function(params) {
+          const point = flatPathCoords.value[params[0].dataIndex]
+          return `
+            <div style="font-weight:bold;">点 #${params[0].dataIndex}</div>
+            经度：${point.lng.toFixed(6)}<br/>
+            纬度：${point.lat.toFixed(6)}<br/>
+            累计距离：${params[0].value.toFixed(1)} m
+          `
+        }
+      },
+      xAxis: {
+        type: 'index',
+        name: '路径点索引',
+        nameLocation: 'middle',
+        nameGap: 25,
+        axisLabel: {
+          color: '#666'
+        }
+      },
+      yAxis: {
+        type: 'value',
+        name: '累计距离 (米)',
+        axisLabel: {
+          color: '#666',
+          formatter: '{value} m'
+        },
+        splitLine: {
+          lineStyle: {
+            color: '#eee'
+          }
+        }
+      },
+      series: [{
+        name: '累计距离',
+        type: 'line',
+        data: distances,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        itemStyle: {
+          color: '#4D4FC3'
+        },
+        lineStyle: {
+          width: 3,
+          color: '#4D4FC3'
+        },
+        areaStyle: {
+          color: new echarts.default.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(77, 79, 195, 0.3)' },
+            { offset: 1, color: 'rgba(77, 79, 195, 0.05)' }
+          ])
+        }
+      }],
+      grid: {
+        left: '10%',
+        right: '5%',
+        bottom: '10%',
+        top: '15%'
+      }
+    }
+    
+    distanceChart.setOption(option)
+  }).catch(err => {
+    console.error('加载 ECharts 失败:', err)
+  })
 }
 
 // 数据清洗：扁平化路径坐标
@@ -1042,6 +1303,115 @@ const THREE = window.THREE || {}
         </div>
       </div>
     </div>
+    
+    <!-- 路径信息可视化面板 -->
+    <div v-if="showPathInfo" class="card fade-in" style="margin-top: 20px;">
+      <div class="path-info-panel">
+        <div class="path-info-title">📊 路径参数可视化</div>
+        
+        <!-- 统计卡片 -->
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">总距离</div>
+            <div class="stat-value">{{ pathStats.totalDistance }}</div>
+            <div class="stat-unit">米</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">预计时间</div>
+            <div class="stat-value">{{ pathStats.estimatedTime }}</div>
+            <div class="stat-unit">秒</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">路径点数</div>
+            <div class="stat-value">{{ pathStats.pointCount }}</div>
+            <div class="stat-unit">个</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">平均速度</div>
+            <div class="stat-value">{{ pathStats.avgSpeed }}</div>
+            <div class="stat-unit">m/s</div>
+          </div>
+        </div>
+        
+        <!-- 坐标信息 -->
+        <div class="coord-info">
+          <div class="coord-item">
+            <span class="coord-label">📍 起点坐标：</span>
+            <span class="coord-value">{{ pathStats.startCoord }}</span>
+          </div>
+          <div class="coord-item">
+            <span class="coord-label">🏁 终点坐标：</span>
+            <span class="coord-value">{{ pathStats.endCoord }}</span>
+          </div>
+        </div>
+        
+        <!-- 图表容器 -->
+        <div ref="chartContainer" class="chart-container"></div>
+      </div>
+    </div>
+    
+    <!-- 算法对比面板 -->
+    <div v-if="showComparePanel && compareResults" class="card fade-in" style="margin-top: 20px;">
+      <div class="compare-panel">
+        <div class="compare-title">⚖️ 算法对比分析</div>
+        
+        <!-- 对比表格 -->
+        <div class="comparison-table">
+          <div class="table-header">
+            <div class="header-cell">指标</div>
+            <div class="header-cell">A*算法</div>
+            <div class="header-cell">迪杰斯特拉算法</div>
+          </div>
+          <div class="table-row">
+            <div class="cell-label">📏 总距离</div>
+            <div class="cell-value" :class="{ 'better': compareResults.astar.distance <= compareResults.dijkstra.distance }">
+              {{ compareResults.astar.distance }} 米
+            </div>
+            <div class="cell-value" :class="{ 'better': compareResults.dijkstra.distance < compareResults.astar.distance }">
+              {{ compareResults.dijkstra.distance }} 米
+            </div>
+          </div>
+          <div class="table-row">
+            <div class="cell-label">⏱️ 预计时间</div>
+            <div class="cell-value" :class="{ 'better': compareResults.astar.time <= compareResults.dijkstra.time }">
+              {{ compareResults.astar.time }} 秒
+            </div>
+            <div class="cell-value" :class="{ 'better': compareResults.dijkstra.time < compareResults.astar.time }">
+              {{ compareResults.dijkstra.time }} 秒
+            </div>
+          </div>
+          <div class="table-row">
+            <div class="cell-label">🔢 路径点数</div>
+            <div class="cell-value" :class="{ 'better': compareResults.astar.points <= compareResults.dijkstra.points }">
+              {{ compareResults.astar.points }} 个
+            </div>
+            <div class="cell-value" :class="{ 'better': compareResults.dijkstra.points < compareResults.astar.points }">
+              {{ compareResults.dijkstra.points }} 个
+            </div>
+          </div>
+        </div>
+        
+        <!-- 推荐结果 -->
+        <div v-if="compareResults.recommendation" class="recommendation-box">
+          <div class="recommendation-title">
+            🏆 推荐算法：<span class="highlight">{{ compareResults.recommendation.algorithm }}</span>
+          </div>
+          <div class="recommendation-reasons">
+            <div v-for="(reason, index) in compareResults.recommendation.reasons" :key="index" class="reason-item">
+              {{ reason }}
+            </div>
+          </div>
+          <div class="recommendation-advantages">
+            <strong>优势：</strong>
+            <ul>
+              <li v-for="(adv, index) in compareResults.recommendation.advantages" :key="index">
+                {{ adv }}
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -1184,6 +1554,284 @@ const THREE = window.THREE || {}
   color: #C0C4CC;
   border-color: #E4E7ED;
   transform: none;
+}
+
+/* 路径信息面板样式 */
+.path-info-panel {
+  padding: 20px;
+}
+
+.path-info-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 20px;
+  color: #4D4FC3;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.stat-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  color: white;
+  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.stat-card::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    45deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.1) 50%,
+    transparent 70%
+  );
+  transform: rotate(45deg);
+  transition: all 0.5s ease;
+}
+
+.stat-card:hover::before {
+  left: 100%;
+}
+
+.stat-card:hover {
+  transform: translateY(-5px) scale(1.02);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6);
+}
+
+.stat-label {
+  font-size: 14px;
+  opacity: 0.9;
+  margin-bottom: 8px;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.stat-unit {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.coord-info {
+  background: #f8f9fa;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 20px;
+}
+
+.coord-item {
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.coord-item:last-child {
+  margin-bottom: 0;
+}
+
+.coord-label {
+  font-weight: 600;
+  color: #4D4FC3;
+}
+
+.coord-value {
+  color: #666;
+  font-family: 'Courier New', monospace;
+}
+
+.chart-container {
+  width: 100%;
+  height: 400px;
+  background: white;
+  border-radius: 8px;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  
+  .stat-card {
+    padding: 15px;
+  }
+  
+  .stat-value {
+    font-size: 24px;
+  }
+  
+  .chart-container {
+    height: 300px;
+  }
+}
+
+/* 算法对比面板样式 */
+.compare-panel {
+  padding: 20px;
+}
+
+.compare-title {
+  font-size: 20px;
+  font-weight: bold;
+  margin-bottom: 20px;
+  color: #4D4FC3;
+  text-align: center;
+}
+
+.comparison-table {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+}
+
+.table-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-weight: bold;
+  padding: 15px;
+}
+
+.header-cell {
+  text-align: center;
+  font-size: 16px;
+}
+
+.table-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  padding: 15px;
+  border-bottom: 1px solid #e8e8e8;
+  background: white;
+  transition: all 0.3s ease;
+}
+
+.table-row:last-child {
+  border-bottom: none;
+}
+
+.table-row:hover {
+  background: #f8f9fa;
+}
+
+.cell-label {
+  font-weight: 600;
+  color: #666;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cell-value {
+  text-align: center;
+  font-size: 15px;
+  color: #333;
+  font-weight: 500;
+  padding: 8px;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.cell-value.better {
+  background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+  color: #2d3748;
+  font-weight: bold;
+  transform: scale(1.05);
+  box-shadow: 0 2px 8px rgba(168, 237, 234, 0.4);
+}
+
+.recommendation-box {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  border-radius: 12px;
+  padding: 20px;
+  color: white;
+  box-shadow: 0 4px 15px rgba(240, 147, 251, 0.4);
+}
+
+.recommendation-title {
+  font-size: 18px;
+  font-weight: bold;
+  margin-bottom: 15px;
+  text-align: center;
+}
+
+.recommendation-title .highlight {
+  background: rgba(255, 255, 255, 0.3);
+  padding: 4px 12px;
+  border-radius: 20px;
+  margin-left: 8px;
+  font-size: 20px;
+}
+
+.recommendation-reasons {
+  margin-bottom: 15px;
+}
+
+.reason-item {
+  background: rgba(255, 255, 255, 0.2);
+  padding: 10px 15px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.recommendation-advantages ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.recommendation-advantages li {
+  background: rgba(255, 255, 255, 0.15);
+  padding: 10px 15px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+@media (max-width: 768px) {
+  .table-header,
+  .table-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  
+  .header-cell,
+  .cell-label,
+  .cell-value {
+    text-align: left;
+  }
+  
+  .cell-value.better {
+    transform: none;
+  }
 }
 
 /* 响应式设计 */

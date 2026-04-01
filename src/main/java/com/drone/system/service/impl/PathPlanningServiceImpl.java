@@ -90,12 +90,49 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
     }
     
     /**
-     * A*算法路径规划
+     * A*算法路径规划（完整实现）
+     * 使用网格化的方式模拟城市道路网络
+     * 并在起点和终点之间创建更合理的路径
      */
     private List<PathPlanningResponse.PathPoint> planAStar(PathPlanningRequest request) {
-        // 简化实现：在实际应用中，这里应该实现完整的 A*算法
-        // 这里使用直线插值来模拟路径点
-        return generateInterpolatedPath(request, 20);
+        BigDecimal startLng = request.getStartLng();
+        BigDecimal startLat = request.getStartLat();
+        BigDecimal endLng = request.getEndLng();
+        BigDecimal endLat = request.getEndLat();
+        
+        // 创建更精细的网格来模拟真实道路
+        int gridSize = 20; // 20x20 的网格
+        double[][][] grid = new double[gridSize][gridSize][2];
+        
+        // 计算网格间距
+        BigDecimal lngStep = endLng.subtract(startLng).divide(new BigDecimal(gridSize - 1), 10, RoundingMode.HALF_UP);
+        BigDecimal latStep = endLat.subtract(startLat).divide(new BigDecimal(gridSize - 1), 10, RoundingMode.HALF_UP);
+        
+        // 填充网格坐标
+        for (int i = 0; i < gridSize; i++) {
+            for (int j = 0; j < gridSize; j++) {
+                grid[i][j][0] = startLng.add(lngStep.multiply(new BigDecimal(j))).doubleValue();
+                grid[i][j][1] = startLat.add(latStep.multiply(new BigDecimal(i))).doubleValue();
+            }
+        }
+        
+        // 生成一些模拟的"建筑物"或"障碍物"区域
+        List<ObstacleZone> obstacleZones = generateSimulatedObstacles(startLng.doubleValue(), startLat.doubleValue(), 
+                                                                       endLng.doubleValue(), endLat.doubleValue());
+        
+        // 使用 A*算法寻找最优路径（避开障碍物）
+        List<int[]> pathGrid = aStarSearchWithObstacles(grid, 0, 0, gridSize - 1, gridSize - 1, obstacleZones);
+        
+        // 将网格路径转换为地理坐标点
+        List<PathPlanningResponse.PathPoint> pathPoints = new ArrayList<>();
+        for (int i = 0; i < pathGrid.size(); i++) {
+            int[] cell = pathGrid.get(i);
+            BigDecimal lng = new BigDecimal(grid[cell[0]][cell[1]][0]);
+            BigDecimal lat = new BigDecimal(grid[cell[0]][cell[1]][1]);
+            pathPoints.add(new PathPlanningResponse.PathPoint(lng, lat, new BigDecimal(50), i));
+        }
+        
+        return pathPoints;
     }
     
     /**
@@ -211,6 +248,128 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
         }
         
         return dijkstraSearchWithObstacles(grid, startX, startY, endX, endY, obstacles);
+    }
+    
+    /**
+     * A*算法搜索最优路径（考虑障碍物）
+     * 使用启发式函数优化搜索效率
+     */
+    private List<int[]> aStarSearchWithObstacles(double[][][] grid, int startX, int startY,
+                                                   int endX, int endY, List<ObstacleZone> obstacles) {
+        int rows = grid.length;
+        int cols = grid[0].length;
+        
+        // g 值数组（从起点到当前点的实际代价）
+        double[][] gScore = new double[rows][cols];
+        for (double[] row : gScore) {
+            Arrays.fill(row, Double.MAX_VALUE);
+        }
+        gScore[startX][startY] = 0;
+        
+        // f 值数组（g + h，h 为启发式估计代价）
+        double[][] fScore = new double[rows][cols];
+        for (double[] row : fScore) {
+            Arrays.fill(row, Double.MAX_VALUE);
+        }
+        fScore[startX][startY] = heuristic(startX, startY, endX, endY);
+        
+        // 前驱节点数组
+        int[][][] prev = new int[rows][cols][2];
+        
+        // 优先队列（按 f 值排序）
+        PriorityQueue<int[]> pq = new PriorityQueue<>((a, b) -> Double.compare(fScore[a[0]][a[1]], fScore[b[0]][b[1]]));
+        pq.offer(new int[]{startX, startY});
+        
+        // 方向数组（上下左右 + 对角线）
+        int[][] directions = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
+        
+        while (!pq.isEmpty()) {
+            int[] current = pq.poll();
+            int x = current[0];
+            int y = current[1];
+            
+            // 到达终点
+            if (x == endX && y == endY) {
+                break;
+            }
+            
+            // 探索八个方向
+            for (int[] dir : directions) {
+                int newX = x + dir[0];
+                int newY = y + dir[1];
+                
+                if (newX >= 0 && newX < rows && newY >= 0 && newY < cols) {
+                    // 检查新位置是否在障碍物内
+                    double newLng = grid[newX][newY][0];
+                    double newLat = grid[newX][newY][1];
+                    
+                    boolean isInObstacle = false;
+                    for (ObstacleZone obstacle : obstacles) {
+                        if (obstacle.contains(newLng, newLat)) {
+                            isInObstacle = true;
+                            break;
+                        }
+                    }
+                    
+                    // 如果在障碍物内，跳过这个点
+                    if (isInObstacle) {
+                        continue;
+                    }
+                    
+                    // 计算边的权重（欧几里得距离）
+                    double dx = grid[newX][newY][0] - grid[x][y][0];
+                    double dy = grid[newX][newY][1] - grid[x][y][1];
+                    double weight = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // 如果是障碍物附近的点，增加权重（让路径倾向于远离障碍物）
+                    double distanceToNearestObstacle = Double.MAX_VALUE;
+                    for (ObstacleZone obstacle : obstacles) {
+                        double distToObs = Math.sqrt(Math.pow(newLng - obstacle.lng, 2) + 
+                                                    Math.pow(newLat - obstacle.lat, 2));
+                        distanceToNearestObstacle = Math.min(distanceToNearestObstacle, distToObs);
+                    }
+                    
+                    // 越靠近障碍物，权重越大
+                    if (distanceToNearestObstacle < 0.0003) {
+                        weight *= 3.0;
+                    }
+                    
+                    // 计算新的 g 值
+                    double tentativeGScore = gScore[x][y] + weight;
+                    
+                    if (tentativeGScore < gScore[newX][newY]) {
+                        // 找到更好的路径
+                        prev[newX][newY] = new int[]{x, y};
+                        gScore[newX][newY] = tentativeGScore;
+                        fScore[newX][newY] = tentativeGScore + heuristic(newX, newY, endX, endY);
+                        pq.offer(new int[]{newX, newY});
+                    }
+                }
+            }
+        }
+        
+        // 回溯路径
+        List<int[]> path = new ArrayList<>();
+        int x = endX, y = endY;
+        while (!(x == startX && y == startY)) {
+            path.add(new int[]{x, y});
+            int[] p = prev[x][y];
+            x = p[0];
+            y = p[1];
+        }
+        path.add(new int[]{startX, startY});
+        Collections.reverse(path);
+        
+        return path;
+    }
+    
+    /**
+     * 启发式函数：计算两点间的欧几里得距离
+     */
+    private double heuristic(int x1, int y1, int x2, int y2) {
+        double dx = x2 - x1;
+        double dy = y2 - y1;
+        return Math.sqrt(dx * dx + dy * dy);
     }
     
     /**
