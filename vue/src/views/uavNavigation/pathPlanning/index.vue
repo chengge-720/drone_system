@@ -4,7 +4,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   MapLocation, RefreshRight, Delete, Document, Location, 
   Clock, Loading, VideoCamera, TrendCharts, MagicStick, 
-  Position, ZoomIn, ZoomOut, RefreshLeft, ArrowDown, Check, MoreFilled 
+  Position, ZoomIn, ZoomOut, RefreshLeft, ArrowDown, Check, MoreFilled,
+  Setting, Search
 } from '@element-plus/icons-vue'
 
 // ========== 导入工具模块 ==========
@@ -42,6 +43,36 @@ import {
 import {
   drawGlowingPolyline
 } from '@/utils/pathStyleManager'
+import {
+  AlgorithmMetrics,
+  compareAlgorithms,
+  generateAnalysisReport,
+  calculateSmoothness,
+  generateComparisonTableData
+} from '@/utils/algorithmComparison'
+import {
+  saveComparison,
+  getAllComparisons,
+  getRecentComparisons,
+  deleteComparison,
+  ComparisonHistoryItem
+} from '@/utils/comparisonHistory'
+import {
+  initRadarChart,
+  initBarChart,
+  initPercentageBarChart,
+  disposeChart
+} from '@/utils/comparisonCharts'
+import {
+  loadWeights,
+  saveWeights,
+  resetWeights,
+  validateWeights,
+  getWeightPresets,
+  applyWeightPreset,
+  calculateWeightedScore,
+  DEFAULT_WEIGHTS
+} from '@/utils/weightConfig'
 
 // ========== 核心数据 ==========
 const map = ref(null)
@@ -109,8 +140,29 @@ const algorithmList = [
   { label: '强化学习模型', value: '强化学习模型' },
   { label: 'A*算法', value: 'A*算法' },
   { label: '迪杰斯特拉算法', value: '迪杰斯特拉算法' },
-  { label: '蚁群算法', value: '蚁群算法' }
+  { label: '蚁群算法', value: '蚁群算法' },
+  { label: '遗传算法', value: '遗传算法' },
 ]
+
+// ========== 新增功能数据 ==========
+// 历史记录
+const showHistoryDialog = ref(false)
+const historyList = ref([])
+const searchKeyword = ref('')
+
+// 图表可视化
+const showChartsDialog = ref(false)
+const radarChartContainer = ref(null)
+const barChartContainer = ref(null)
+const percentageChartContainer = ref(null)
+let radarChartInstance = null
+let barChartInstance = null
+let percentageChartInstance = null
+
+// 权重配置
+const showWeightConfigDialog = ref(false)
+const customWeights = ref({ ...DEFAULT_WEIGHTS })
+const selectedPreset = ref('自定义')
 
 // ========== 地图初始化 ==========
 const initMap = () => {
@@ -250,27 +302,51 @@ const calculatePathByApi = async (start, end) => {
 
 // ========== 处理对比结果 ==========
 const processCompareResults = (astarData, dijkstraData) => {
+  // 创建算法指标对象
+  const astarMetrics = new AlgorithmMetrics('A*')
+  astarMetrics.distance = astarData.totalDistance
+  astarMetrics.time = astarData.estimatedTime
+  astarMetrics.points = astarData.pathPoints.length
+  astarMetrics.computationTime = astarData.computationTime || 0
+  astarMetrics.smoothness = calculateSmoothness(astarData.pathPoints)
+  astarMetrics.turnCount = countTurns(astarData.pathPoints)
+  
+  const dijkstraMetrics = new AlgorithmMetrics('Dijkstra')
+  dijkstraMetrics.distance = dijkstraData.totalDistance
+  dijkstraMetrics.time = dijkstraData.estimatedTime
+  dijkstraMetrics.points = dijkstraData.pathPoints.length
+  dijkstraMetrics.computationTime = dijkstraData.computationTime || 0
+  dijkstraMetrics.smoothness = calculateSmoothness(dijkstraData.pathPoints)
+  dijkstraMetrics.turnCount = countTurns(dijkstraData.pathPoints)
+  
+  // 生成对比报告
+  const analysisReport = generateAnalysisReport(astarMetrics, dijkstraMetrics)
+  const tableData = generateComparisonTableData(astarMetrics, dijkstraMetrics)
+  
+  // 存储对比结果
   compareResults.value = {
     astar: {
       name: 'A*算法',
       distance: astarData.totalDistance,
       time: astarData.estimatedTime,
       points: astarData.pathPoints.length,
-      pathPoints: astarData.pathPoints
+      pathPoints: astarData.pathPoints,
+      metrics: astarMetrics,
+      computationTime: astarData.computationTime || 0
     },
     dijkstra: {
       name: '迪杰斯特拉算法',
       distance: dijkstraData.totalDistance,
       time: dijkstraData.estimatedTime,
       points: dijkstraData.pathPoints.length,
-      pathPoints: dijkstraData.pathPoints
+      pathPoints: dijkstraData.pathPoints,
+      metrics: dijkstraMetrics,
+      computationTime: dijkstraData.computationTime || 0
     },
-    recommendation: null
+    recommendation: analysisReport.recommendation,
+    analysisReport: analysisReport,
+    tableData: tableData
   }
-  
-  // 分析并推荐
-  const result = analyzeAndRecommend(compareResults.value.astar, compareResults.value.dijkstra)
-  compareResults.value.recommendation = result.recommendation
   
   // 显示对比面板
   showComparePanel.value = true
@@ -292,12 +368,250 @@ const processCompareResults = (astarData, dijkstraData) => {
   
   // 初始化增强功能
   initEnhancedFeatures()
+  
+  // 保存历史记录
+  saveToHistory(astarMetrics, dijkstraMetrics, analysisReport.recommendation)
+}
+
+// 统计转弯次数
+const countTurns = (pathPoints) => {
+  if (!pathPoints || pathPoints.length < 3) return 0
+  
+  let turnCount = 0
+  for (let i = 1; i < pathPoints.length - 1; i++) {
+    const prev = pathPoints[i - 1]
+    const curr = pathPoints[i]
+    const next = pathPoints[i + 1]
+    
+    const v1 = { x: curr.lng - prev.lng, y: curr.lat - prev.lat }
+    const v2 = { x: next.lng - curr.lng, y: next.lat - curr.lat }
+    
+    const angle = calculateAngleBetweenVectors(v1, v2)
+    if (Math.abs(angle) > 15) {
+      turnCount++
+    }
+  }
+  
+  return turnCount
+}
+
+const calculateAngleBetweenVectors = (v1, v2) => {
+  const dot = v1.x * v2.x + v1.y * v2.y
+  const mag1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y)
+  const mag2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y)
+  
+  if (mag1 === 0 || mag2 === 0) return 0
+  
+  const cosAngle = dot / (mag1 * mag2)
+  return Math.acos(Math.max(-1, Math.min(1, cosAngle))) * (180 / Math.PI)
 }
 
 const analyzeAndRecommendLocal = () => {
   if (!compareResults.value) return
   const result = analyzeAndRecommend(compareResults.value.astar, compareResults.value.dijkstra)
-  compareResults.value = result
+  compareResults.value.recommendation = result.recommendation
+}
+
+// ========== 历史记录管理 ==========
+const saveToHistory = (astarMetrics, dijkstraMetrics, recommendation) => {
+  const historyItem = new ComparisonHistoryItem({
+    startPoint: startPoint.value,
+    endPoint: endPoint.value,
+    uavName: selectedUav.value?.uavName || '未知无人机',
+    astarMetrics: {
+      distance: astarMetrics.distance,
+      time: astarMetrics.time,
+      points: astarMetrics.points,
+      computationTime: astarMetrics.computationTime,
+      smoothness: astarMetrics.smoothness,
+      turnCount: astarMetrics.turnCount
+    },
+    dijkstraMetrics: {
+      distance: dijkstraMetrics.distance,
+      time: dijkstraMetrics.time,
+      points: dijkstraMetrics.points,
+      computationTime: dijkstraMetrics.computationTime,
+      smoothness: dijkstraMetrics.smoothness,
+      turnCount: dijkstraMetrics.turnCount
+    },
+    recommendation: {
+      algorithm: recommendation.algorithm,
+      confidence: recommendation.confidence,
+      reasons: recommendation.reasons
+    },
+    weights: customWeights.value
+  })
+  
+  const success = saveComparison(historyItem)
+  if (success) {
+    console.log('✅ 对比记录已保存')
+  }
+}
+
+const openHistoryDialog = async () => {
+  showHistoryDialog.value = true
+  await loadHistoryList()
+}
+
+const loadHistoryList = async () => {
+  if (searchKeyword.value) {
+    historyList.value = searchComparisons(searchKeyword.value)
+  } else {
+    historyList.value = getRecentComparisons(20)
+  }
+}
+
+const deleteHistoryItem = async (id) => {
+  try {
+    await ElMessageBox.confirm('确定要删除这条记录吗？', '提示', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    
+    const success = deleteComparison(id)
+    if (success) {
+      ElMessage.success('删除成功')
+      await loadHistoryList()
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除失败:', error)
+    }
+  }
+}
+
+const loadHistoryDetail = async (historyItem) => {
+  // TODO: 加载历史记录详情到对比面板
+  ElMessage.info('历史记录详情功能开发中...')
+  showHistoryDialog.value = false
+}
+
+const clearHistory = async () => {
+  try {
+    await ElMessageBox.confirm('确定要清空所有历史记录吗？此操作不可恢复！', '警告', {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+    
+    const success = clearAllComparisons()
+    if (success) {
+      ElMessage.success('已清空所有历史记录')
+      historyList.value = []
+    }
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('清空失败:', error)
+    }
+  }
+}
+
+// ========== 图表可视化 ==========
+const openChartsDialog = () => {
+  if (!compareResults.value) {
+    ElMessage.warning('请先进行路径规划对比')
+    return
+  }
+  
+  showChartsDialog.value = true
+  
+  setTimeout(() => {
+    initCharts()
+  }, 100)
+}
+
+const initCharts = () => {
+  if (!compareResults.value) return
+  
+  const { astar, dijkstra, tableData } = compareResults.value
+  
+  // 销毁旧图表
+  disposeChart(radarChartInstance)
+  disposeChart(barChartInstance)
+  disposeChart(percentageChartInstance)
+  
+  // 创建新图表
+  if (radarChartContainer.value) {
+    radarChartInstance = initRadarChart(
+      radarChartContainer.value,
+      astar.metrics,
+      dijkstra.metrics
+    )
+  }
+  
+  if (barChartContainer.value) {
+    barChartInstance = initBarChart(
+      barChartContainer.value,
+      tableData
+    )
+  }
+  
+  if (percentageChartContainer.value) {
+    percentageChartInstance = initPercentageBarChart(
+      percentageChartContainer.value,
+      astar.metrics,
+      dijkstra.metrics
+    )
+  }
+}
+
+// ========== 权重配置 ==========
+const openWeightConfigDialog = () => {
+  customWeights.value = loadWeights()
+  selectedPreset.value = getCurrentPresetName(customWeights.value)
+  showWeightConfigDialog.value = true
+}
+
+const applyPreset = (presetName) => {
+  const weights = applyWeightPreset(presetName)
+  customWeights.value = weights
+  selectedPreset.value = presetName
+}
+
+const validateAndSaveWeights = () => {
+  if (!validateWeights(customWeights.value)) {
+    ElMessage.error('权重配置无效，请确保总和为 1')
+    return
+  }
+  
+  const normalized = normalizeWeights(customWeights.value)
+  saveWeights(normalized)
+  customWeights.value = normalized
+  
+  ElMessage.success('权重配置已保存')
+  showWeightConfigDialog.value = false
+  
+  // 如果已有对比结果，重新计算推荐
+  if (compareResults.value) {
+    // TODO: 使用新权重重新计算
+    ElMessage.info('将使用新权重重新计算推荐结果...')
+  }
+}
+
+const resetToDefaultWeights = () => {
+  customWeights.value = resetWeights()
+  selectedPreset.value = '均衡模式'
+}
+
+const normalizeWeights = (weights) => {
+  const values = Object.entries(weights).map(([key, value]) => ({
+    key,
+    value: parseFloat(value) || 0
+  }))
+  
+  const sum = values.reduce((acc, item) => acc + item.value, 0)
+  
+  if (sum === 0) {
+    return { ...DEFAULT_WEIGHTS }
+  }
+  
+  const normalized = {}
+  values.forEach(({ key, value }) => {
+    normalized[key] = parseFloat((value / sum).toFixed(4))
+  })
+  
+  return normalized
 }
 
 
@@ -411,13 +725,13 @@ const simulateFlight = async () => {
       flatPathCoords.value = result.flatPathCoords
       pathStats.value = result.pathStats
       showPathInfo.value = true
-      setTimeout(() => initCharts(), 100)
+      setTimeout(() => initPathChart(), 100)
     }
   }
 }
 
 // ========== 图表初始化 ==========
-const initCharts = () => {
+const initPathChart = () => {
   if (!chartContainer.value || flatPathCoords.value.length === 0) return
   distanceChart = initDistanceChart(chartContainer.value, flatPathCoords.value, distanceChart)
 }
@@ -645,6 +959,9 @@ onUnmounted(() => {
               <el-dropdown-menu>
                 <el-dropdown-item @click="navigateToRouteInfo" :icon="TrendCharts">查看路线信息</el-dropdown-item>
                 <el-dropdown-item @click="toggleMapMode" :icon="Position">{{ is3DMode ? '切换到 2D' : '切换到 3D' }}</el-dropdown-item>
+                <el-dropdown-item divided @click="openChartsDialog" :icon="TrendCharts">📊 图表可视化</el-dropdown-item>
+                <el-dropdown-item @click="openHistoryDialog" :icon="Clock">📜 历史记录</el-dropdown-item>
+                <el-dropdown-item @click="openWeightConfigDialog" :icon="Setting">⚙️ 权重配置</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
@@ -770,31 +1087,13 @@ onUnmounted(() => {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td class="label-cell"><el-icon><Location /></el-icon> 总距离</td>
-                <td :class="['value-cell', compareResults.astar.distance <= compareResults.dijkstra.distance ? 'better' : '']">
-                  {{ compareResults.astar.distance }} 米
+              <tr v-for="(row, index) in compareResults.tableData" :key="index">
+                <td class="label-cell">{{ row.metric }}</td>
+                <td :class="['value-cell', row.astar.better ? 'better' : '']">
+                  {{ row.astar.value }} {{ row.astar.unit }}
                 </td>
-                <td :class="['value-cell', compareResults.dijkstra.distance < compareResults.astar.distance ? 'better' : '']">
-                  {{ compareResults.dijkstra.distance }} 米
-                </td>
-              </tr>
-              <tr>
-                <td class="label-cell"><el-icon><Clock /></el-icon> 预计时间</td>
-                <td :class="['value-cell', compareResults.astar.time <= compareResults.dijkstra.time ? 'better' : '']">
-                  {{ compareResults.astar.time }} 秒
-                </td>
-                <td :class="['value-cell', compareResults.dijkstra.time < compareResults.astar.time ? 'better' : '']">
-                  {{ compareResults.dijkstra.time }} 秒
-                </td>
-              </tr>
-              <tr>
-                <td class="label-cell"><el-icon><Loading /></el-icon> 路径点数</td>
-                <td :class="['value-cell', compareResults.astar.points <= compareResults.dijkstra.points ? 'better' : '']">
-                  {{ compareResults.astar.points }} 个
-                </td>
-                <td :class="['value-cell', compareResults.dijkstra.points < compareResults.astar.points ? 'better' : '']">
-                  {{ compareResults.dijkstra.points }} 个
+                <td :class="['value-cell', row.dijkstra.better ? 'better' : '']">
+                  {{ row.dijkstra.value }} {{ row.dijkstra.unit }}
                 </td>
               </tr>
             </tbody>
@@ -802,18 +1101,19 @@ onUnmounted(() => {
         </div>
         
         <!-- 推荐结果 -->
-        <div v-if="compareResults.recommendation" class="recommendation-box">
+        <div v-if="compareResults.analysisReport" class="recommendation-box">
           <div class="recommendation-header">
             <div class="recommendation-title">
               <span class="trophy">🏆</span>
-              推荐算法：<span class="highlight-badge">{{ compareResults.recommendation.algorithm }}</span>
+              推荐算法：<span class="highlight-badge">{{ compareResults.analysisReport.recommendation.algorithm }}</span>
+              <span class="confidence-badge">置信度：{{ compareResults.analysisReport.recommendation.confidence.toFixed(1) }}%</span>
             </div>
           </div>
           <div class="recommendation-content">
             <div class="reason-section">
               <div class="section-label"><el-icon><MagicStick /></el-icon> 推荐理由</div>
               <div class="reason-list">
-                <div v-for="(reason, index) in compareResults.recommendation.reasons" :key="index" class="reason-tag">
+                <div v-for="(reason, index) in compareResults.analysisReport.recommendation.reasons" :key="index" class="reason-tag">
                   {{ reason }}
                 </div>
               </div>
@@ -821,9 +1121,66 @@ onUnmounted(() => {
             <div class="advantage-section">
               <div class="section-label"><el-icon><TrendCharts /></el-icon> 核心优势</div>
               <div class="advantage-list">
-                <div v-for="(adv, index) in compareResults.recommendation.advantages" :key="index" class="advantage-item">
+                <div v-for="(adv, index) in compareResults.analysisReport.recommendation.reasons" :key="index" class="advantage-item">
                   <el-icon class="check-icon"><Check /></el-icon>
                   {{ adv }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 算法优缺点分析 -->
+        <div v-if="compareResults.analysisReport" class="analysis-details">
+          <div class="analysis-grid">
+            <div class="analysis-card astar-card">
+              <div class="analysis-header">
+                <h4>⚡ A*算法分析</h4>
+              </div>
+              <div class="analysis-content">
+                <div class="sub-section">
+                  <div class="sub-title text-success">✓ 优点</div>
+                  <ul class="feature-list">
+                    <li v-for="(adv, i) in compareResults.analysisReport.astar.advantages" :key="i">{{ adv }}</li>
+                  </ul>
+                </div>
+                <div class="sub-section">
+                  <div class="sub-title text-warning">⚠ 缺点</div>
+                  <ul class="feature-list">
+                    <li v-for="(dis, i) in compareResults.analysisReport.astar.disadvantages" :key="i">{{ dis }}</li>
+                  </ul>
+                </div>
+                <div class="sub-section">
+                  <div class="sub-title text-info">💡 适用场景</div>
+                  <ul class="feature-list">
+                    <li v-for="(scene, i) in compareResults.analysisReport.astar.bestFor" :key="i">{{ scene }}</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+            
+            <div class="analysis-card dijkstra-card">
+              <div class="analysis-header">
+                <h4>🔍 迪杰斯特拉算法分析</h4>
+              </div>
+              <div class="analysis-content">
+                <div class="sub-section">
+                  <div class="sub-title text-success">✓ 优点</div>
+                  <ul class="feature-list">
+                    <li v-for="(adv, i) in compareResults.analysisReport.dijkstra.advantages" :key="i">{{ adv }}</li>
+                  </ul>
+                </div>
+                <div class="sub-section">
+                  <div class="sub-title text-warning">⚠ 缺点</div>
+                  <ul class="feature-list">
+                    <li v-for="(dis, i) in compareResults.analysisReport.dijkstra.disadvantages" :key="i">{{ dis }}</li>
+                  </ul>
+                </div>
+                <div class="sub-section">
+                  <div class="sub-title text-info">💡 适用场景</div>
+                  <ul class="feature-list">
+                    <li v-for="(scene, i) in compareResults.analysisReport.dijkstra.bestFor" :key="i">{{ scene }}</li>
+                  </ul>
                 </div>
               </div>
             </div>
@@ -866,6 +1223,143 @@ onUnmounted(() => {
       </el-table>
       <template #footer>
         <el-button @click="showTaskDialog = false">取消</el-button>
+      </template>
+    </el-dialog>
+    
+    <!-- 历史记录对话框 -->
+    <el-dialog v-model="showHistoryDialog" title="📜 历史对比记录" width="1000px">
+      <div class="history-toolbar">
+        <el-input 
+          v-model="searchKeyword" 
+          placeholder="搜索起点、终点或无人机..." 
+          clearable
+          @input="loadHistoryList"
+          style="width: 300px;"
+        >
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <el-button type="danger" size="small" @click="clearHistory" :icon="Delete">
+          清空全部
+        </el-button>
+      </div>
+      
+      <el-table :data="historyList" style="width: 100%; max-height: 500px;" border>
+        <el-table-column prop="timestamp" label="时间" width="160" align="center">
+          <template #default="scope">
+            {{ scope.row.getFormattedTime() }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="startPoint" label="起点" width="180" align="center" show-overflow-tooltip/>
+        <el-table-column prop="endPoint" label="终点" width="180" align="center" show-overflow-tooltip/>
+        <el-table-column prop="uavName" label="无人机" width="120" align="center"/>
+        <el-table-column label="推荐算法" width="140" align="center">
+          <template #default="scope">
+            <el-tag :type="scope.row.recommendation.algorithm.includes('A*') ? 'success' : 'primary'">
+              {{ scope.row.recommendation.algorithm }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="置信度" width="100" align="center">
+          <template #default="scope">
+            {{ scope.row.recommendation.confidence.toFixed(1) }}%
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="180" align="center" fixed="right">
+          <template #default="scope">
+            <el-button type="primary" size="small" @click="loadHistoryDetail(scope.row)">
+              加载
+            </el-button>
+            <el-button type="danger" size="small" @click="deleteHistoryItem(scope.row.id)" :icon="Delete">
+              删除
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="showHistoryDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+    
+    <!-- 图表可视化对话框 -->
+    <el-dialog v-model="showChartsDialog" title="📊 算法对比可视化" width="1200px">
+      <el-tabs type="border-card">
+        <el-tab-pane label="雷达图">
+          <div ref="radarChartContainer" style="width: 100%; height: 500px;"></div>
+        </el-tab-pane>
+        <el-tab-pane label="柱状对比图">
+          <div ref="barChartContainer" style="width: 100%; height: 500px;"></div>
+        </el-tab-pane>
+        <el-tab-pane label="百分比堆叠图">
+          <div ref="percentageChartContainer" style="width: 100%; height: 500px;"></div>
+        </el-tab-pane>
+      </el-tabs>
+      <template #footer>
+        <el-button @click="showChartsDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+    
+    <!-- 权重配置对话框 -->
+    <el-dialog v-model="showWeightConfigDialog" title="⚙️ 权重配置" width="700px">
+      <div class="weight-config-content">
+        <div class="preset-section">
+          <div class="section-label">快速预设</div>
+          <el-select v-model="selectedPreset" @change="applyPreset" style="width: 100%;">
+            <el-option label="均衡模式" value="均衡模式" />
+            <el-option label="效率优先" value="效率优先" />
+            <el-option label="速度优先" value="速度优先" />
+            <el-option label="平稳优先" value="平稳优先" />
+            <el-option label="节能模式" value="节能模式" />
+            <el-option label="快速响应" value="快速响应" />
+          </el-select>
+        </div>
+        
+        <div class="weights-grid">
+          <div class="weight-item">
+            <div class="weight-label">
+              <span>路径长度</span>
+              <el-tag size="small" type="danger">{{ (customWeights.distance * 100).toFixed(0) }}%</el-tag>
+            </div>
+            <el-slider v-model="customWeights.distance" :step="0.01" :max="1" show-input />
+          </div>
+          
+          <div class="weight-item">
+            <div class="weight-label">
+              <span>飞行时间</span>
+              <el-tag size="small" type="warning">{{ (customWeights.time * 100).toFixed(0) }}%</el-tag>
+            </div>
+            <el-slider v-model="customWeights.time" :step="0.01" :max="1" show-input />
+          </div>
+          
+          <div class="weight-item">
+            <div class="weight-label">
+              <span>计算速度</span>
+              <el-tag size="small" type="primary">{{ (customWeights.computation * 100).toFixed(0) }}%</el-tag>
+            </div>
+            <el-slider v-model="customWeights.computation" :step="0.01" :max="1" show-input />
+          </div>
+          
+          <div class="weight-item">
+            <div class="weight-label">
+              <span>路径平滑度</span>
+              <el-tag size="small" type="success">{{ (customWeights.smoothness * 100).toFixed(0) }}%</el-tag>
+            </div>
+            <el-slider v-model="customWeights.smoothness" :step="0.01" :max="1" show-input />
+          </div>
+        </div>
+        
+        <div class="weight-summary">
+          <el-alert 
+            :title="`当前总权重：${(Object.values(customWeights).reduce((a, b) => a + b, 0) * 100).toFixed(1)}%`" 
+            :type="Math.abs(Object.values(customWeights).reduce((a, b) => a + b, 0) - 1) < 0.01 ? 'success' : 'error'"
+            :closable="false"
+            show-icon
+          />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="resetToDefaultWeights">重置默认</el-button>
+        <el-button @click="showWeightConfigDialog = false">取消</el-button>
+        <el-button type="primary" @click="validateAndSaveWeights">保存配置</el-button>
       </template>
     </el-dialog>
   </div>
@@ -1519,6 +2013,170 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
+/* ========== 新增：算法详细分析样式 ========== */
+.analysis-details {
+  margin-top: 24px;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.analysis-card {
+  background: white;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  border: 2px solid #e2e8f0;
+  transition: var(--transition);
+}
+
+.analysis-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+.astar-card {
+  border-color: #10B981;
+}
+
+.dijkstra-card {
+  border-color: #3B82F6;
+}
+
+.analysis-header {
+  background: var(--primary-gradient);
+  padding: 16px 20px;
+  color: white;
+}
+
+.analysis-header h4 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.analysis-content {
+  padding: 20px;
+}
+
+.sub-section {
+  margin-bottom: 20px;
+}
+
+.sub-section:last-child {
+  margin-bottom: 0;
+}
+
+.sub-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.text-success { color: #10B981; }
+.text-warning { color: #F59E0B; }
+.text-info { color: #3B82F6; }
+
+.feature-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.feature-list li {
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border-left: 3px solid #e2e8f0;
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 1.5;
+  border-radius: 4px;
+  transition: var(--transition);
+}
+
+.feature-list li:hover {
+  background: #ffffff;
+  border-left-color: #667eea;
+  transform: translateX(4px);
+}
+
+.confidence-badge {
+  background: rgba(255, 255, 255, 0.25);
+  padding: 6px 16px;
+  border-radius: 24px;
+  font-size: 16px;
+  font-weight: 700;
+  backdrop-filter: blur(10px);
+  margin-left: 12px;
+}
+
+/* ========== 历史记录工具栏 ========== */
+.history-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+/* ========== 权重配置样式 ========== */
+.weight-config-content {
+  padding: 10px 0;
+}
+
+.preset-section {
+  margin-bottom: 24px;
+}
+
+.section-label {
+  font-size: 15px;
+  font-weight: 600;
+  color: #4D4FC3;
+  margin-bottom: 12px;
+}
+
+.weights-grid {
+  display: grid;
+  gap: 20px;
+  margin-bottom: 20px;
+}
+
+.weight-item {
+  padding: 16px;
+  background: #f8f9fa;
+  border-radius: 12px;
+  border: 2px solid #e2e8f0;
+  transition: var(--transition);
+}
+
+.weight-item:hover {
+  border-color: #667eea;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+}
+
+.weight-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.weight-summary {
+  margin-top: 20px;
+}
+
 
 /* ========== 响应式设计 ========== */
 @media (max-width: 768px) {
@@ -1544,6 +2202,10 @@ onUnmounted(() => {
   }
   
   .recommendation-content {
+    grid-template-columns: 1fr;
+  }
+  
+  .analysis-grid {
     grid-template-columns: 1fr;
   }
   
