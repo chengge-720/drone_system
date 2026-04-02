@@ -54,4 +54,12 @@ public interface IUavTaskService {
      * @return 可用无人机列表
      */
     List<Uav> getAvailableUavs(String taskType, double distance);
+
+    /**
+     * 根据任务需求智能推荐最合适的无人机
+     *
+     * @param task 任务信息
+     * @return 推荐的无人机列表（按匹配度排序）
+     */
+    List<Uav> recommendUavsForTask(UavTask task);
 }

@@ -51,3 +51,12 @@ export function getAvailableUavs(taskParams){
         data: taskParams
     })
 }
+
+//智能推荐无人机（根据任务需求）
+export function recommendUavs(data){
+    return request({
+        url:"/uavInfo/taskInfo/recommendUavs",
+        method:"post",
+        data: data
+    })
+}

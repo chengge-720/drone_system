@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from "vue"
-import { selectTaskList, insertTask, updateTask, deleteTaskByTaskIds, getAvailableUavs } from '@/api/system/task.js'
-import { selectUavList } from '@/api/system/uav.js'
+import { ref, onMounted } from "vue"
+import { selectTaskList, insertTask, updateTask, deleteTaskByTaskIds, getAvailableUavs, recommendUavs } from '@/api/system/task.js'
+import { selectUavList, planPath as apiPlanPath } from '@/api/system/uav.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Search, Document, List, Edit, Clock, Delete, RefreshLeft, Plus, Close, Check, RefreshRight, MapLocation, VideoCamera } from '@element-plus/icons-vue'
 import {VxeModal} from "vxe-pc-ui";
 import 'vxe-pc-ui/lib/style.css'
 
@@ -25,7 +26,11 @@ const taskForm = ref({
   endLocation: '',
   description: '',
   uavId: null,
-  status: 1 // 1-待执行，2-执行中，3-已完成，4-已取消
+  status: 1, // 1-待执行，2-执行中，3-已完成，4-已取消
+  maxDistance: 0, // 最大飞行距离（公里）
+  estimatedTime: 0, // 预计飞行时间（分钟）
+  requiredLoad: 0, // 所需载重（kg）
+  urgency: 1 // 紧急程度：1-普通，2-紧急，3-非常紧急
 })
 
 // 任务状态选项
@@ -63,11 +68,24 @@ const pathLine = ref(null)
 // 加载任务列表
 const getTaskList = async () => {
   try {
+    console.log('📋 请求任务列表，参数:', query.value)
     const response = await selectTaskList(query.value)
-    taskList.value = response.rows || []
+    console.log('📋 响应数据:', response)
+    
+    // 关键修复：确保正确获取 rows 数组
+    taskList.value = Array.isArray(response.rows) ? response.rows : []
     total.value = response.total || 0
+    
+    console.log('✅ 任务列表加载完成，数量:', taskList.value.length)
+    console.log('📊 taskList 数据:', taskList.value)
+    
+    // 如果数据存在但不显示，检查是否是响应式问题
+    if (taskList.value.length > 0) {
+      console.log('🎉 有数据，应该显示卡片了!')
+    }
   } catch (error) {
-    console.error('获取任务列表失败:', error)
+    console.error('❌ 获取任务列表失败:', error)
+    ElMessage.error('获取任务列表失败：' + (error as Error).message)
   }
 }
 
@@ -93,7 +111,11 @@ const openTaskDialog = () => {
     startLocation: '',
     endLocation: '',
     description: '无',
-    uavId: null
+    uavId: null,
+    maxDistance: 0,
+    estimatedTime: 0,
+    requiredLoad: 0,
+    urgency: 1
   }
   title.value = '发布任务'
   taskDialogVisible.value = true
@@ -124,7 +146,7 @@ const searchLocation = (location, callback) => {
 }
 
 // 计算路径并获取可用无人机
-const calculatePathAndGetUavs = () => {
+const calculatePathAndGetUavs = async () => {
   if (!taskForm.value.startLocation || !taskForm.value.endLocation) {
     ElMessage.warning('请输入起始地点和终点')
     return
@@ -133,41 +155,183 @@ const calculatePathAndGetUavs = () => {
   // 清除之前的标记和路径
   clearMapMarkers()
 
-  // 搜索起点
-  searchLocation(taskForm.value.startLocation, (startPointObj) => {
-    if (startPointObj) {
-      startPoint.value = startPointObj
-      const startMarker = new BMap.Marker(startPointObj)
-      map.value.addOverlay(startMarker)
+  try {
+    // 搜索起点
+    await new Promise<void>((resolve, reject) => {
+      searchLocation(taskForm.value.startLocation, (startPointObj) => {
+        if (startPointObj) {
+          startPoint.value = startPointObj
+          const startMarker = new BMap.Marker(startPointObj)
+          map.value.addOverlay(startMarker)
+          resolve()
+        } else {
+          reject(new Error('起点地址解析失败'))
+        }
+      })
+    })
 
-      // 搜索终点
+    // 搜索终点
+    await new Promise<void>((resolve, reject) => {
       searchLocation(taskForm.value.endLocation, (endPointObj) => {
         if (endPointObj) {
           endPoint.value = endPointObj
           const endMarker = new BMap.Marker(endPointObj)
           map.value.addOverlay(endMarker)
-
-          // 绘制路径
-          pathLine.value = new BMap.Polyline([startPointObj, endPointObj], {
-            strokeColor: '#4D4FC3',
-            strokeWeight: 5,
-            strokeOpacity: 0.8
-          })
-          map.value.addOverlay(pathLine.value)
-
-          // 计算距离
-          const distance = map.value.getDistance(startPointObj, endPointObj) / 1000 // 转换为公里
-
-          // 获取可用无人机
-          getAvailableUavList(distance)
+          resolve()
         } else {
-          ElMessage.error('终点地址解析失败')
+          reject(new Error('终点地址解析失败'))
         }
       })
-    } else {
-      ElMessage.error('起点地址解析失败')
+    })
+
+    // 先绘制直线路径（用于快速预览）
+    pathLine.value = new BMap.Polyline([startPoint.value, endPoint.value], {
+      strokeColor: '#4D4FC3',
+      strokeWeight: 5,
+      strokeOpacity: 0.8
+    })
+    map.value.addOverlay(pathLine.value)
+
+    // 计算直线距离
+    const straightDistance = map.value.getDistance(startPoint.value, endPoint.value)
+    
+    // 方案 2：增加安全系数来估算实际飞行距离
+    // 考虑因素：建筑物绕行、禁飞区规避、气象影响、地形障碍等
+    const SAFETY_FACTOR = 1.8 // 80% 的额外距离余量
+    const actualDistance = straightDistance * SAFETY_FACTOR
+    
+    // 更新任务表单的距离和时间
+    taskForm.value.maxDistance = (actualDistance / 1000).toFixed(2) // 转换为公里
+    
+    // 假设平均速度 10m/s，估算时间（分钟）- 同样考虑安全系数
+    const estimatedTimeSeconds = (actualDistance / 10) * SAFETY_FACTOR
+    taskForm.value.estimatedTime = Math.round(estimatedTimeSeconds / 60)
+
+    console.log('📏 直线距离:', (straightDistance / 1000).toFixed(2), 'km')
+    console.log('🛡️ 安全系数:', SAFETY_FACTOR)
+    console.log('✈️ 预估实际距离:', taskForm.value.maxDistance, 'km')
+    console.log('⏱️ 预估时间:', taskForm.value.estimatedTime, 'min')
+
+    // 【新增】尝试调用后端路径规划 API 获取真实路径（简化版预览）
+    try {
+      await planDetailedPath(startPoint.value, endPoint.value)
+    } catch (pathError) {
+      console.warn('⚠️ 详细路径规划失败，使用直线距离估算:', pathError)
+      // 如果路径规划失败，继续使用直线距离 + 安全系数
     }
-  })
+
+    // 调用智能推荐 API 获取最佳匹配无人机
+    getBestMatchUavs(actualDistance / 1000)
+    
+    ElMessage.success('路径计算完成，正在匹配无人机...')
+  } catch (error) {
+    console.error('❌ 路径计算失败:', error)
+    ElMessage.error('路径计算失败：' + (error as Error).message)
+  }
+}
+
+// 【新增】调用后端 API 进行详细路径规划（简化版预览）
+const planDetailedPath = async (start, end) => {
+  try {
+    console.log('🗺️ 开始简化版路径规划...')
+    
+    const requestData = {
+      startLng: start.lng,
+      startLat: start.lat,
+      endLng: end.lng,
+      endLat: end.lat,
+      uavId: null, // 发布任务时可能还没选择无人机
+      algorithm: 2 // 默认使用迪杰斯特拉算法
+    }
+    
+    console.log('🗺️ 请求后端 API，参数:', requestData)
+    
+    const response = await apiPlanPath(requestData)
+    
+    if (response.code === 200 && response.data) {
+      const pathData = response.data
+      console.log('✅ 简化版路径规划成功:', pathData)
+      
+      // 如果有真实路径数据，更新显示
+      if (pathData.pathPoints && pathData.pathPoints.length > 0) {
+        // 清除之前的直线路径
+        if (pathLine.value) {
+          map.value.removeOverlay(pathLine.value)
+        }
+        
+        // 绘制真实路径（橙色表示真实路径）
+        const realPathCoords = pathData.pathPoints.map((p: any) => 
+          new BMap.Point(p.lng, p.lat)
+        )
+        
+        pathLine.value = new BMap.Polyline(realPathCoords, {
+          strokeColor: '#F59E0B', // 橙色
+          strokeWeight: 6,
+          strokeOpacity: 0.9
+        })
+        map.value.addOverlay(pathLine.value)
+        
+        // 使用真实距离更新表单（如果后端返回了距离）
+        if (pathData.distance && pathData.distance > 0) {
+          const REAL_DISTANCE = pathData.distance
+          taskForm.value.maxDistance = (REAL_DISTANCE / 1000).toFixed(2)
+          
+          // 重新计算时间
+          const estimatedTimeSeconds = (REAL_DISTANCE / 10) * 1.2 // 真实路径只需要 20% 余量
+          taskForm.value.estimatedTime = Math.round(estimatedTimeSeconds / 60)
+          
+          console.log('🔄 已使用真实路径距离:', taskForm.value.maxDistance, 'km')
+          console.log('🔄 已更新预估时间:', taskForm.value.estimatedTime, 'min')
+          
+          ElMessage.success(`已获取真实飞行路径（${taskForm.value.maxDistance} km）`)
+        }
+      }
+    } else {
+      console.warn('⚠️ 路径规划 API 返回异常:', response)
+      throw new Error('路径规划 API 返回异常')
+    }
+  } catch (error) {
+    console.error('❌ 简化版路径规划失败:', error)
+    throw error // 向上抛出错误，让上层继续处理
+  }
+}
+
+// 获取最佳匹配的无人机（智能推荐）
+const getBestMatchUavs = async (distance) => {
+  try {
+    // 构建任务对象用于智能推荐
+    const taskData = {
+      taskType: taskForm.value.taskType,
+      maxDistance: distance,
+      estimatedTime: taskForm.value.estimatedTime,
+      requiredLoad: taskForm.value.requiredLoad || 0,
+      urgency: taskForm.value.urgency || 1
+    }
+    
+    console.log('🤖 调用智能推荐 API，参数:', taskData)
+    
+    const response = await recommendUavs(taskData)
+    availableUavs.value = response.data || []
+    
+    if (availableUavs.value.length === 0) {
+      ElMessage.info('没有找到符合条件的无人机')
+      // fallback: 获取所有可用无人机
+      const uavResponse = await selectUavList({ pageNum: 1, pageSize: 100 })
+      availableUavs.value = uavResponse.rows || []
+    } else {
+      ElMessage.success(`智能推荐 ${availableUavs.value.length} 架最合适的无人机`)
+      // 自动选择排名第一的无人机
+      if (availableUavs.value.length > 0) {
+        taskForm.value.uavId = availableUavs.value[0].uavId
+        ElMessage.success(`已自动匹配最佳无人机：${availableUavs.value[0].uavModel}`)
+      }
+    }
+  } catch (error) {
+    console.error('❌ 智能推荐失败:', error)
+    // fallback: 直接获取所有无人机
+    const uavResponse = await selectUavList({ pageNum: 1, pageSize: 100 })
+    availableUavs.value = uavResponse.rows || []
+  }
 }
 
 // 获取可用无人机列表
@@ -242,7 +406,11 @@ const handleUpdate = (row) => {
     endLocation: row.endLocation,
     description: row.description,
     uavId: row.uavId,
-    status: row.status || 1
+    status: row.status || 1,
+    maxDistance: row.maxDistance || 0,
+    estimatedTime: row.estimatedTime || 0,
+    requiredLoad: row.requiredLoad || 0,
+    urgency: row.urgency || 1
   }
   title.value = '编辑任务'
   taskDialogVisible.value = true
@@ -284,6 +452,69 @@ const handleDelete = (row) => {
 onMounted(() => {
   getTaskList()
 })
+
+// ========== 辅助函数 ==========
+// 获取紧急度样式类
+const getUrgencyClass = (urgency: number) => {
+  if (urgency === 3) return 'urgency-high'
+  if (urgency === 2) return 'urgency-medium'
+  return 'urgency-low'
+}
+
+// 获取状态类型
+const getStatusType = (status: number) => {
+  const types: any = { 1: 'success', 2: 'warning', 3: 'info', 4: 'danger' }
+  return types[status] || 'info'
+}
+
+// 获取状态文本
+const getStatusText = (status: number) => {
+  const texts: any = { 1: '待执行', 2: '执行中', 3: '已完成', 4: '已取消' }
+  return texts[status] || '未知'
+}
+
+// 获取任务类型颜色
+const getTaskTypeColor = (type: string) => {
+  const colors: any = {
+    '救援': '#a4ddd4',
+    '运送': '#a4ddd4',
+    '测绘': '#a4ddd4',
+    '航拍': '#a4ddd4',
+    '巡检': '#a4ddd4',
+    '其他': '#a4ddd4'
+  }
+  return colors[type] || '#909399'
+}
+
+// 获取紧急度类型
+const getUrgencyType = (urgency: number) => {
+  const types: any = { 1: 'info', 2: 'warning', 3: 'danger' }
+  return types[urgency] || 'info'
+}
+
+// 获取紧急度文本
+const getUrgencyText = (urgency: number) => {
+  const texts: any = { 1: '普通', 2: '紧急', 3: '非常紧急' }
+  return texts[urgency] || '未知'
+}
+
+// 截断文本
+const truncateText = (text: string, length: number) => {
+  if (!text) return ''
+  return text.length > length ? text.substring(0, length) + '...' : text
+}
+
+// 格式化日期
+const formatDate = (date: string | Date) => {
+  if (!date) return ''
+  const d = new Date(date)
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const hours = String(d.getHours()).padStart(2, '0')
+  const minutes = String(d.getMinutes()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}`
+}
 </script>
 
 <template>
@@ -291,55 +522,166 @@ onMounted(() => {
     <h1 class="art-text">无人机任务信息</h1>
     
     <!-- 搜索和操作按钮 -->
-    <div class="card fade-in">
-      <div class="search-container">
-        <el-form :model="query" class="search-form">
-          <!-- :gutter 用于紧凑布局 -->
-          <el-row :gutter="20">
-            <el-col :span="8">
-              <el-form-item label="任务名称">
-                <el-input v-model="query.taskName" placeholder="请输入任务名称" />
-              </el-form-item>
-            </el-col>
-            <el-col :span="4">
-              <el-form-item label="任务类型">
-                <el-select v-model="query.taskType" placeholder="请选择任务类型">
-                  <el-option 
-                    v-for="option in taskTypeOptions" 
-                    :key="option.value" 
-                    :label="option.label" 
-                    :value="option.value" 
-                  />
-                </el-select>
-              </el-form-item>
-            </el-col>
-            <el-col :span="12" style="display: flex; gap: 10px;">
-              <el-button type="primary" @click="searchTask" class="action-button primary">搜索</el-button>
-              <el-button @click="resetSearch" class="action-button">重置</el-button>
-              <el-button type="primary" icon="Plus" @click="openTaskDialog" class="action-button primary">发布任务</el-button>
-            </el-col>
-          </el-row>
+    <div class="search-card fade-in">
+      <div class="search-header">
+        <div class="search-title">
+          <el-icon><Search /></el-icon>
+          <span>任务搜索</span>
+        </div>
+      </div>
+      <div class="search-content">
+        <el-form :model="query" inline class="search-form">
+          <el-form-item label="任务名称" prop="taskName">
+            <el-input 
+              v-model="query.taskName" 
+              placeholder="请输入任务名称" 
+              clearable
+              class="search-input"
+            >
+              <template #prefix>
+                <el-icon><Edit /></el-icon>
+              </template>
+            </el-input>
+          </el-form-item>
+          
+          <el-form-item label="任务类型" prop="taskType">
+            <el-select 
+              v-model="query.taskType" 
+              placeholder="请选择任务类型" 
+              clearable
+              class="search-select"
+            >
+              <el-option 
+                v-for="option in taskTypeOptions" 
+                :key="option.value" 
+                :label="option.label" 
+                :value="option.value" 
+              />
+            </el-select>
+          </el-form-item>
+          
+          <el-form-item class="search-actions">
+            <el-button type="primary" icon="Search" class="btn-search" @click="searchTask">搜索</el-button>
+            <el-button icon="RefreshLeft" class="btn-reset" @click="resetSearch">重置</el-button>
+            <el-button type="primary" icon="Plus" class="btn-add" @click="openTaskDialog">发布任务</el-button>
+          </el-form-item>
         </el-form>
       </div>
     </div>
     
     <!-- 任务列表 -->
-    <div class="card fade-in" style="margin-top: 20px;">
-      <el-table :data="taskList" style="width: 100%" border>
-        <el-table-column prop="taskId" label="任务编号" width="120" align="center"/>
-        <el-table-column prop="taskName" label="任务名称" align="center"/>
-        <el-table-column prop="taskType" label="任务类型" align="center"/>
-        <el-table-column prop="startLocation" label="起始地点" align="center"/>
-        <el-table-column prop="endLocation" label="终点" align="center"/>
-        <el-table-column prop="uavModel" label="使用无人机" align="center"/>
-        <el-table-column prop="createTime" label="创建时间" width="180" align="center"/>
-        <el-table-column label="操作" align="center" width="150">
-          <template #default="scope">
-            <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">编辑</el-button>
-            <el-button link type="danger" icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table> 
+    <div class="task-list-card fade-in">
+      <div class="task-grid-container">
+        <div v-for="(task, index) in taskList" :key="task.taskId" class="task-card" :style="{ animationDelay: `${index * 0.1}s` }">
+          <!-- 卡片顶部渐变条 -->
+          <div class="task-card-header" :class="getUrgencyClass(task.urgency)">
+            <div class="task-card-id">#{{ task.taskId }}</div>
+            <div class="task-card-status">
+              <el-tag :type="getStatusType(task.status)" size="small" effect="dark">
+                {{ getStatusText(task.status) }}
+              </el-tag>
+            </div>
+          </div>
+          
+          <!-- 卡片主体内容 -->
+          <div class="task-card-body">
+            <!-- 任务名称和类型 -->
+            <div class="task-title-section">
+              <h3 class="task-card-title">{{ task.taskName }}</h3>
+              <el-tag :color="getTaskTypeColor(task.taskType)" size="small" round>
+                {{ task.taskType }}
+              </el-tag>
+            </div>
+            
+            <!-- 路线信息 -->
+            <div class="task-route-section">
+              <div class="route-item">
+                <div class="route-dot start-dot"></div>
+                <span class="route-text">{{ task.startLocation }}</span>
+              </div>
+              <div class="route-line"></div>
+              <div class="route-item">
+                <div class="route-dot end-dot"></div>
+                <span class="route-text">{{ task.endLocation }}</span>
+              </div>
+            </div>
+            
+            <!-- 任务参数 -->
+            <div class="task-params-grid">
+              <div class="param-item">
+                <div class="param-icon">📏</div>
+                <div class="param-content">
+                  <div class="param-label">距离</div>
+                  <div class="param-value">{{ task.maxDistance?.toFixed(2) || '-' }} km</div>
+                </div>
+              </div>
+              
+              <div class="param-item">
+                <div class="param-icon">⏱️</div>
+                <div class="param-content">
+                  <div class="param-label">时间</div>
+                  <div class="param-value">{{ task.estimatedTime || '-' }} min</div>
+                </div>
+              </div>
+              
+              <div class="param-item">
+                <div class="param-icon">🔋</div>
+                <div class="param-content">
+                  <div class="param-label">载重</div>
+                  <div class="param-value">{{ task.requiredLoad?.toFixed(1) || '-' }} kg</div>
+                </div>
+              </div>
+              
+              <div class="param-item">
+                <div class="param-icon">🚨</div>
+                <div class="param-content">
+                  <div class="param-label">紧急度</div>
+                  <div class="param-value">
+                    <el-tag :type="getUrgencyType(task.urgency)" size="small">
+                      {{ getUrgencyText(task.urgency) }}
+                    </el-tag>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 无人机信息 -->
+            <div v-if="task.uavModel" class="uav-info-section">
+              <div class="uav-label">🛸 执行无人机</div>
+              <div class="uav-model">{{ task.uavModel }}</div>
+            </div>
+            
+            <!-- 任务描述 -->
+            <div v-if="task.description && task.description !== '无'" class="task-description">
+              <el-tooltip :content="task.description" placement="top">
+                <div class="description-preview">
+                  <el-icon><Document /></el-icon>
+                  <span>{{ truncateText(task.description, 20) }}</span>
+                </div>
+              </el-tooltip>
+            </div>
+          </div>
+          
+          <!-- 卡片底部操作区 -->
+          <div class="task-card-footer">
+            <div class="task-time">
+              <el-icon><Clock /></el-icon>
+              <span>{{ formatDate(task.createTime) }}</span>
+            </div>
+            <div class="task-actions">
+              <el-button type="primary" size="small" circle @click="handleUpdate(task)">
+                <el-icon><Edit /></el-icon>
+              </el-button>
+              <el-button type="danger" size="small" circle @click="handleDelete(task)">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 空状态提示 -->
+      <el-empty v-if="taskList.length === 0" description="暂无任务数据" />
     </div>
     
     <!-- 分页 -->
@@ -356,193 +698,935 @@ onMounted(() => {
     </div>
     
     <!-- 发布任务对话框 -->
-    <vxe-modal
+    <el-dialog
       v-model="taskDialogVisible"
       :title="title"
-      width="500px"
-      show-footer
-      :max-height="450"
+      width="560px"
+      class="task-dialog-el"
+      :close-on-click-modal="false"
+      destroy-on-close
     >
-      <div class="task-form compact ultra-compact">
-        <div class="form-row ultra-tight">
-          <div class="form-item">
-            <label>任务名称</label>
-            <vxe-input v-model="taskForm.taskName" placeholder="请输入任务名称" size="mini" />
+      <div class="task-form-scroll-wrapper ultra-compact">
+        <div class="form-section-title compact">
+          <el-icon><Document /></el-icon>
+          <span>基本信息</span>
+        </div>
+        <div class="task-form ultra-compact">
+          <div class="form-row ultra-tight">
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <el-icon><Edit /></el-icon>
+                任务名称
+              </label>
+              <el-input v-model="taskForm.taskName" placeholder="请输入任务名称" size="small" />
+            </div>
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <el-icon><List /></el-icon>
+                任务类型
+              </label>
+              <el-select v-model="taskForm.taskType" placeholder="请选择任务类型" size="small" style="width: 100%;">
+                <el-option 
+                  v-for="option in taskTypeOptions" 
+                  :key="option.value" 
+                  :label="option.label" 
+                  :value="option.value" 
+                />
+              </el-select>
+            </div>
           </div>
-          <div class="form-item">
-            <label>任务类型</label>
-            <vxe-select v-model="taskForm.taskType" placeholder="请选择任务类型" size="mini">
-              <vxe-option 
-                v-for="option in taskTypeOptions" 
-                :key="option.value" 
-                :label="option.label" 
-                :value="option.value" 
-              />
-            </vxe-select>
+          <div class="form-row ultra-tight">
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <el-icon><Clock /></el-icon>
+                任务状态
+              </label>
+              <el-select v-model="taskForm.status" placeholder="请选择任务状态" size="small" style="width: 100%;">
+                <el-option 
+                  v-for="option in taskStatusOptions" 
+                  :key="option.value" 
+                  :label="option.label" 
+                  :value="option.value" 
+                />
+              </el-select>
+            </div>
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <el-icon><Bell /></el-icon>
+                紧急程度
+              </label>
+              <el-select v-model="taskForm.urgency" placeholder="请选择紧急程度" size="small" style="width: 100%;">
+                <el-option label="普通" :value="1" />
+                <el-option label="紧急" :value="2" />
+                <el-option label="非常紧急" :value="3" />
+              </el-select>
+            </div>
           </div>
         </div>
-        <div class="form-row ultra-tight">
-          <div class="form-item">
-            <label>任务状态</label>
-            <vxe-select v-model="taskForm.status" placeholder="请选择任务状态" size="mini">
-              <vxe-option 
-                v-for="option in taskStatusOptions" 
-                :key="option.value" 
-                :label="option.label" 
-                :value="option.value" 
-              />
-            </vxe-select>
+
+        <div class="form-section-title compact">
+          <el-icon><Location /></el-icon>
+          <span>路线信息</span>
+        </div>
+        <div class="task-form ultra-compact">
+          <div class="form-row ultra-tight">
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <div class="location-dot start"></div>
+                起始地点
+              </label>
+              <el-input v-model="taskForm.startLocation" placeholder="请输入起始地点" size="small" />
+            </div>
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <div class="location-dot end"></div>
+                终点
+              </label>
+              <el-input v-model="taskForm.endLocation" placeholder="请输入终点" size="small" />
+            </div>
           </div>
         </div>
-        <div class="form-row ultra-tight">
-          <div class="form-item">
-            <label>起始地点</label>
-            <vxe-input v-model="taskForm.startLocation" placeholder="请输入起始地点" size="mini" />
+
+        <div class="form-section-title compact">
+          <el-icon><Setting /></el-icon>
+          <span>任务参数</span>
+        </div>
+        <div class="task-form ultra-compact">
+          <div class="form-row ultra-tight">
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <el-icon><ScaleToOriginal /></el-icon>
+                最大距离 (km)
+              </label>
+              <el-input-number v-model="taskForm.maxDistance" :min="0" :precision="2" placeholder="自动计算" readonly class="readonly-input" controls-position="right" size="small" style="width: 100%;" />
+            </div>
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <el-icon><Timer /></el-icon>
+                预计时间 (min)
+              </label>
+              <el-input-number v-model="taskForm.estimatedTime" :min="0" :precision="0" placeholder="自动估算" readonly class="readonly-input" controls-position="right" size="small" style="width: 100%;" />
+            </div>
+            <div class="form-item">
+              <label class="form-label ultra-small">
+                <el-icon><Loading /></el-icon>
+                所需载重 (kg)
+              </label>
+              <el-input-number v-model="taskForm.requiredLoad" :min="0" :max="50" :precision="2" placeholder="0-50" controls-position="right" size="small" style="width: 100%;" />
+            </div>
           </div>
-          <div class="form-item">
-            <label>终点</label>
-            <vxe-input v-model="taskForm.endLocation" placeholder="请输入终点" size="mini" />
+          <div class="form-row ultra-tight">
+            <div class="form-item full-width">
+              <label class="form-label ultra-small">
+                <el-icon><Document /></el-icon>
+                任务描述
+              </label>
+              <el-input v-model="taskForm.description" type="textarea" :rows="2" placeholder="请输入任务描述" size="small" />
+            </div>
           </div>
         </div>
-        <div class="form-row ultra-tight">
-          <div class="form-item full-width">
-            <label>任务描述</label>
-            <vxe-textarea v-model="taskForm.description" placeholder="请输入任务描述" rows="1" size="mini" />
-          </div>
+
+        <div class="form-section-title compact">
+          <el-icon><MapLocation /></el-icon>
+          <span>地图与无人机</span>
         </div>
-        <div class="form-row ultra-tight">
-          <div class="form-item full-width">
-            <label>地图预览</label>
-            <div class="map-container ultra-mini" ref="mapContainer"></div>
-            <vxe-button type="primary" @click="calculatePathAndGetUavs" style="margin-top: 4px;" size="mini">计算路径并获取可用无人机</vxe-button>
+        <div class="task-form ultra-compact">
+          <div class="form-row ultra-tight">
+            <div class="form-item full-width">
+              <label class="form-label ultra-small">地图预览</label>
+              <div class="map-container super-compact" ref="mapContainer"></div>
+              <el-button type="primary" @click="calculatePathAndGetUavs" class="btn-calculate super-compact" style="margin-top: 6px; width: 100%;">
+                <el-icon><RefreshRight /></el-icon>
+                计算路径并获取可用无人机
+              </el-button>
+            </div>
           </div>
-        </div>
-        <div class="form-row ultra-tight">
-          <div class="form-item full-width">
-            <label>选择无人机</label>
-            <vxe-select v-model="taskForm.uavId" placeholder="推荐选择无人机" size="mini">
-              <vxe-option 
-                v-for="uav in availableUavs" 
-                :key="uav.uavId" 
-                :label="uav.uavModel" 
-                :value="uav.uavId" 
-              />
-            </vxe-select>
-            <p v-if="availableUavs.length === 0" style="color: #999; margin-top: 2px; font-size: 11px;">请先计算路径以获取可用无人机</p>
+          <div class="form-row ultra-tight">
+            <div class="form-item full-width">
+              <label class="form-label ultra-small">
+                <el-icon><VideoCamera /></el-icon>
+                选择无人机
+              </label>
+              <el-select v-model="taskForm.uavId" placeholder="推荐选择无人机" size="small" style="width: 100%;" class="uav-select">
+                <el-option 
+                  v-for="uav in availableUavs" 
+                  :key="uav.uavId" 
+                  :label="uav.uavModel" 
+                  :value="uav.uavId" 
+                >
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>{{ uav.uavModel }}</span>
+                    <el-tag v-if="availableUavs.length > 0 && uav === availableUavs[0]" type="success" size="small" effect="dark">
+                      推荐
+                    </el-tag>
+                  </div>
+                </el-option>
+              </el-select>
+              <p v-if="availableUavs.length === 0" class="hint-text ultra-small">
+                <el-icon><InfoFilled /></el-icon>
+                请先计算路径以获取可用无人机
+              </p>
+            </div>
           </div>
         </div>
       </div>
       <template #footer>
-        <div class="dialog-footer ultra-compact">
-          <vxe-button size="mini" @click="taskDialogVisible = false">取消</vxe-button>
-          <vxe-button type="primary" size="mini" @click="submitTask">发布任务</vxe-button>
+        <div class="dialog-footer">
+          <el-button class="btn-cancel" @click="taskDialogVisible = false">
+            <el-icon><Close /></el-icon>
+            取消
+          </el-button>
+          <el-button type="primary" class="btn-submit" @click="submitTask">
+            <el-icon><Check /></el-icon>
+            发布任务
+          </el-button>
         </div>
       </template>
-    </vxe-modal>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-/* 搜索容器 */
-.search-container {
-  padding: 20px;
+/* 搜索卡片 - 现代渐变风格 */
+.search-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.25);
+  margin-bottom: 16px;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.search-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 48px rgba(102, 126, 234, 0.35);
+}
+
+.search-header {
+  padding: 16px 24px;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.search-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+}
+
+.search-title .el-icon {
+  font-size: 18px;
+}
+
+.search-content {
+  padding: 20px 24px;
+  background: #ffffff;
 }
 
 .search-form {
   width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-end;
+}
+
+.search-form .el-form-item {
+  margin-bottom: 0;
+}
+
+.search-input,
+.search-select {
+  width: 220px;
+}
+
+.search-input :deep(.el-input__wrapper),
+.search-select :deep(.el-select__wrapper) {
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transition: all 0.3s ease;
+}
+
+.search-input :deep(.el-input__wrapper):hover,
+.search-select :deep(.el-select__wrapper):hover {
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
+}
+
+.search-input :deep(.el-input__wrapper.is-focus),
+.search-select :deep(.el-select__wrapper.is-focus) {
+  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.25);
+}
+
+.search-actions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.btn-search {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 24px;
+  font-weight: 600;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-search:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+.btn-reset {
+  border-radius: 10px;
+  padding: 10px 24px;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-reset:hover {
+  border-color: #667eea;
+  color: #667eea;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.15);
+}
+
+.btn-add {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 24px;
+  font-weight: 600;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-add:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+}
+
+/* 任务列表卡片 */
+.task-list-card {
+  background: transparent;
+}
+
+/* ========== 任务卡片网格布局 ========== */
+.task-grid-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 24px;
+  padding: 10px;
+}
+
+/* ========== 任务卡片主体 ========== */
+.task-card {
+  background: #ffffff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: slideInUp 0.6s ease-out forwards;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+
+.task-card:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow: 0 12px 40px rgba(77, 79, 195, 0.2);
+  border-color: #4D4FC3;
+}
+
+@keyframes slideInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========== 卡片顶部渐变条 ========== */
+.task-card-header {
+  padding: 16px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: white;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 紧急度渐变背景 */
+.urgency-high {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
+}
+
+.urgency-medium {
+  background: linear-gradient(135deg, #ffa726 0%, #fb8c00 100%);
+}
+
+.urgency-low {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.task-card-id {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+/* ========== 卡片主体内容 ========== */
+.task-card-body {
+  padding: 20px;
+}
+
+/* 任务标题区域 */
+.task-title-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 12px;
+}
+
+.task-card-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: #2d3748;
+  margin: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ========== 路线信息区域 ========== */
+.task-route-section {
+  background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  position: relative;
+}
+
+.route-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.route-item:last-child {
+  margin-bottom: 0;
+}
+
+.route-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.start-dot {
+  background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+  box-shadow: 0 0 12px rgba(72, 187, 120, 0.5);
+}
+
+.end-dot {
+  background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+  box-shadow: 0 0 12px rgba(245, 101, 101, 0.5);
+}
+
+.route-line {
+  width: 2px;
+  height: 16px;
+  background: linear-gradient(to bottom, #48bb78, #f56565);
+  margin-left: 5px;
+  margin-bottom: 8px;
+}
+
+.route-text {
+  font-size: 13px;
+  color: #4a5568;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+/* ========== 任务参数网格 ========== */
+.task-params-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.param-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: linear-gradient(135deg, #fff5f5 0%, #fffafa 100%);
+  border-radius: 10px;
+  transition: all 0.3s ease;
+}
+
+.param-item:hover {
+  background: linear-gradient(135deg, #ffe4e6 0%, #fef2f2 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.param-icon {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.param-content {
+  flex: 1;
+}
+
+.param-label {
+  font-size: 11px;
+  color: #718096;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.param-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: #2d3748;
+}
+
+/* ========== 无人机信息区域 ========== */
+.uav-info-section {
+  background: linear-gradient(135deg, #e6fffa 0%, #b2f5ea 100%);
+  border-left: 4px solid #38b2ac;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.uav-label {
+  font-size: 12px;
+  color: #2c7a7b;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.uav-model {
+  font-size: 15px;
+  font-weight: 700;
+  color: #234e52;
+}
+
+/* ========== 任务描述区域 ========== */
+.task-description {
+  margin-top: 12px;
+}
+
+.description-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: #f7fafc;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #718096;
+  cursor: help;
+  transition: all 0.3s ease;
+}
+
+.description-preview:hover {
+  background: #edf2f7;
+  color: #4a5568;
+}
+
+/* ========== 卡片底部操作区 ========== */
+.task-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border-top: 1px solid #e2e8f0;
+}
+
+.task-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #718096;
+  font-weight: 500;
+}
+
+.task-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.task-actions .el-button {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.task-actions .el-button:hover {
+  transform: scale(1.2) rotate(15deg);
+}
+
+/* ========== 对话框样式美化 - Element Plus ========== */
+.task-dialog-el :deep(.el-dialog) {
+  border-radius: 16px !important;
+  overflow: hidden;
+}
+
+.task-dialog-el :deep(.el-dialog__header) {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 16px 18px !important;
+  border-bottom: none;
+  margin-right: 0 !important;
+  border-radius: 16px 16px 0 0;
+}
+
+.task-dialog-el :deep(.el-dialog__title) {
+  color: #ffffff !important;
+  font-size: 17px !important;
+  font-weight: 600 !important;
+}
+
+.task-dialog-el :deep(.el-dialog__headerbtn .el-dialog__close) {
+  color: #ffffff !important;
+  transition: all 0.3s ease;
+}
+
+.task-dialog-el :deep(.el-dialog__headerbtn .el-dialog__close:hover) {
+  color: #f093fb !important;
+}
+
+.task-dialog-el :deep(.el-dialog__body) {
+  padding: 0 !important;
+  background: #f8f9fa;
+  max-height: calc(60vh - 140px);
+  overflow-y: auto;
+}
+
+.task-dialog-el :deep(.el-dialog__footer) {
+  padding: 12px 18px !important;
+  background: #ffffff;
+  border-top: 1px solid #e2e8f0;
+  border-radius: 0 0 16px 16px;
+}
+
+/* 自定义滚动条 */
+.task-dialog-el :deep(.el-dialog__body::-webkit-scrollbar) {
+  width: 6px;
+}
+
+.task-dialog-el :deep(.el-dialog__body::-webkit-scrollbar-thumb) {
+  background: rgba(102, 126, 234, 0.3);
+  border-radius: 3px;
+}
+
+.task-dialog-el :deep(.el-dialog__body::-webkit-scrollbar-thumb:hover) {
+  background: rgba(102, 126, 234, 0.5);
+}
+
+/* 对话框内容包装器 - 关键修复 */
+.task-form-scroll-wrapper {
+  padding: 14px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.task-form-scroll-wrapper.ultra-compact {
+  padding: 12px;
+}
+
+/* 表单包装器 */
+.task-form-wrapper {
+  padding: 16px;
+}
+
+/* 分组标题 */
+.form-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  margin: 10px -12px 4px;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+  border-left: 3px solid #667eea;
+  color: #2d3748;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.form-section-title.compact {
+  padding: 7px 10px;
+  margin: 8px -10px 3px;
+  font-size: 12px;
+}
+
+.form-section-title .el-icon {
+  color: #667eea;
+  font-size: 16px;
 }
 
 /* 任务表单 */
 .task-form {
-  padding: 20px 0;
-}
-
-.task-form.compact {
-  padding: 10px 0;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
 }
 
 .task-form.ultra-compact {
-  padding: 8px 0;
+  padding: 12px;
+  margin-bottom: 8px;
 }
 
 .form-row {
   display: flex;
-  margin-bottom: 20px;
-  gap: 20px;
-}
-
-.task-form.compact .form-row {
-  margin-bottom: 15px;
-  gap: 15px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .form-row.tight {
-  margin-bottom: 10px;
-  gap: 10px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .form-row.ultra-tight {
-  margin-bottom: 8px;
-  gap: 8px;
+  gap: 6px;
+  margin-bottom: 6px;
 }
 
-.form-row.tight .form-item label {
-  margin-bottom: 4px;
-  font-size: 13px;
-}
-
-.form-row.ultra-tight .form-item label {
-  margin-bottom: 3px;
-  font-size: 12px;
-}
-
-.task-form.ultra-compact .form-item label {
-  margin-bottom: 3px;
-  font-size: 12px;
+.form-row:last-child {
+  margin-bottom: 0;
 }
 
 .form-item {
   flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .form-item.full-width {
   flex: 1 1 100%;
 }
 
-.form-item label {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: 500;
-  color: #333;
+/* 表单标签 */
+.form-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4a5568;
 }
 
-.task-form.compact .form-item label {
-  margin-bottom: 6px;
+.form-label.ultra-small {
+  gap: 4px;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.form-label .el-icon {
+  color: #667eea;
   font-size: 14px;
+}
+
+/* 位置圆点 */
+.location-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.location-dot.start {
+  background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
+  box-shadow: 0 0 8px rgba(72, 187, 120, 0.4);
+}
+
+.location-dot.end {
+  background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
+  box-shadow: 0 0 8px rgba(245, 101, 101, 0.4);
+}
+
+/* 输入框样式 */
+.vxe-input,
+.vxe-select,
+.vxe-textarea {
+  border-radius: 6px !important;
+  border: 1px solid #e2e8f0 !important;
+  transition: all 0.3s ease;
+}
+
+.vxe-input:hover,
+.vxe-select:hover,
+.vxe-textarea:hover {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+.vxe-input:focus,
+.vxe-select:focus,
+.vxe-textarea:focus {
+  border-color: #667eea !important;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+.readonly-input {
+  background: #f7fafc !important;
+  cursor: not-allowed;
 }
 
 /* 地图容器 */
 .map-container {
   width: 100%;
-  height: 400px;
+  height: 220px;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid #e0e0e0;
+  border: 2px solid #e2e8f0;
+  margin-bottom: 8px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
 }
 
 .map-container.compact {
-  height: 250px;
-  border-radius: 6px;
+  height: 180px;
 }
 
-.map-container.mini {
-  height: 200px;
-  border-radius: 4px;
-}
-
-.map-container.ultra-mini {
+.map-container.super-compact {
   height: 160px;
-  border-radius: 4px;
+}
+
+/* 计算路径按钮 */
+.btn-calculate {
+  width: 100%;
+  height: 36px;
+  border-radius: 6px;
+  font-weight: 600;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  border: none !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.btn-calculate.compact {
+  height: 34px;
+  font-size: 11px;
+}
+
+.btn-calculate.super-compact {
+  height: 32px;
+  font-size: 11px;
+}
+
+.btn-calculate:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+/* 无人机选择框 */
+.uav-select {
+  margin-bottom: 8px;
+}
+
+/* 提示文本 */
+.hint-text {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  background: #fff5f5;
+  border-radius: 6px;
+  color: #999;
+  font-size: 11px;
+  margin-top: 6px;
+  border: 1px dashed #feb2b2;
+}
+
+.hint-text.ultra-small {
+  padding: 5px 8px;
+  font-size: 10px;
+  margin-top: 4px;
+}
+
+.hint-text .el-icon {
+  color: #fc8181;
+}
+
+/* 底部按钮 */
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn-cancel {
+  min-width: 80px;
+  height: 34px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  border: 1px solid #e2e8f0 !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.btn-cancel:hover {
+  border-color: #667eea !important;
+  color: #667eea !important;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.15);
+}
+
+.btn-submit {
+  min-width: 100px;
+  height: 34px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 13px;
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+  border: none !important;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.btn-submit:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .form-row {
+    flex-direction: column;
+  }
+  
+  .task-dialog :deep(.vxe-modal) {
+    width: 95% !important;
+  }
 }
 
 /* 操作按钮样式 */

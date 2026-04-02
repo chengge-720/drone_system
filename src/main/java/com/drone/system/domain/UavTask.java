@@ -63,4 +63,24 @@ public class UavTask {
      */
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private Date updateTime;
+
+    /**
+     * 最大飞行距离（公里）
+     */
+    private Double maxDistance;
+
+    /**
+     * 预计飞行时间（分钟）
+     */
+    private Integer estimatedTime;
+
+    /**
+     * 所需载重（kg）
+     */
+    private Double requiredLoad;
+
+    /**
+     * 紧急程度：1-普通，2-紧急，3-非常紧急
+     */
+    private Integer urgency;
 }

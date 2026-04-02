@@ -18,11 +18,16 @@
         <result property="status" column="status"/>
         <result property="createTime" column="create_time"/>
         <result property="updateTime" column="update_time"/>
+        <result property="maxDistance" column="max_distance"/>
+        <result property="estimatedTime" column="estimated_time"/>
+        <result property="requiredLoad" column="required_load"/>
+        <result property="urgency" column="urgency"/>
     </resultMap>
     
     <sql id="selectUavTaskVo">
         select task_id, task_name, task_type, start_location, end_location, description, 
-               uav_id, uav_model, status, create_time, update_time 
+               uav_id, uav_model, status, create_time, update_time, 
+               max_distance, estimated_time, required_load, urgency
         from uav_task_info
     </sql>
     
@@ -67,6 +72,10 @@
             <if test="uavId != null">uav_id,</if>
             <if test="uavModel != null and uavModel != ''">uav_model,</if>
             <if test="status != null">status,</if>
+            <if test="maxDistance != null">max_distance,</if>
+            <if test="estimatedTime != null">estimated_time,</if>
+            <if test="requiredLoad != null">required_load,</if>
+            <if test="urgency != null">urgency,</if>
             create_time, update_time
         </trim>
         <trim prefix="values (" suffix=")" suffixOverrides=",">
@@ -78,6 +87,10 @@
             <if test="uavId != null">#{uavId},</if>
             <if test="uavModel != null and uavModel != ''">#{uavModel},</if>
             <if test="status != null">#{status},</if>
+            <if test="maxDistance != null">#{maxDistance},</if>
+            <if test="estimatedTime != null">#{estimatedTime},</if>
+            <if test="requiredLoad != null">#{requiredLoad},</if>
+            <if test="urgency != null">#{urgency},</if>
             sysdate(), sysdate()
         </trim>
     </insert>
@@ -93,6 +106,10 @@
             <if test="uavId != null">uav_id = #{uavId},</if>
             <if test="uavModel != null and uavModel != ''">uav_model = #{uavModel},</if>
             <if test="status != null">status = #{status},</if>
+            <if test="maxDistance != null">max_distance = #{maxDistance},</if>
+            <if test="estimatedTime != null">estimated_time = #{estimatedTime},</if>
+            <if test="requiredLoad != null">required_load = #{requiredLoad},</if>
+            <if test="urgency != null">urgency = #{urgency},</if>
             update_time = sysdate()
         </set>
         where task_id = #{taskId}

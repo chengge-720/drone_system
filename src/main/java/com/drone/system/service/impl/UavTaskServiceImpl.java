@@ -161,7 +161,7 @@ public class UavTaskServiceImpl implements IUavTaskService {
      * @return 是否适合
      */
     private boolean isUavSuitableForTask(Uav uav, String taskType, double distance) {
-        // 1. 检查续航时间：假设每公里需要1分钟续航时间
+        // 1. 检查续航时间：假设每公里需要 1 分钟续航时间
         boolean hasEnoughFlightTime = uav.getUavMaxFlightTime() != null && uav.getUavMaxFlightTime() >= distance;
         
         // 2. 检查载重能力：载重能力要大于等于两倍的路径距离
@@ -171,5 +171,131 @@ public class UavTaskServiceImpl implements IUavTaskService {
         boolean isAvailable = uav.getUavStatus() != null && uav.getUavStatus() == 1;
         
         return hasEnoughFlightTime && hasEnoughLoadCapacity && isAvailable;
+    }
+
+    /**
+     * 根据任务需求智能推荐最合适的无人机
+     *
+     * @param task 任务信息
+     * @return 推荐的无人机列表（按匹配度排序）
+     */
+    @Override
+    public List<Uav> recommendUavsForTask(UavTask task) {
+        // 查询所有可用的无人机
+        Uav uav = new Uav();
+        uav.setUavStatus(1); // 1-可用
+        List<Uav> allUavs = uavMapper.selectUavList(uav);
+
+        // 计算每架无人机的匹配度分数
+        List<UavScore> uavScores = new ArrayList<>();
+        for (Uav u : allUavs) {
+            double score = calculateUavMatchScore(u, task);
+            if (score > 0) { // 只添加符合条件的无人机
+                uavScores.add(new UavScore(u, score));
+            }
+        }
+
+        // 按匹配度分数降序排序
+        uavScores.sort((a, b) -> Double.compare(b.score, a.score));
+
+        // 提取排序后的无人机列表
+        List<Uav> recommendedUavs = new ArrayList<>();
+        for (UavScore uavScore : uavScores) {
+            recommendedUavs.add(uavScore.uav);
+        }
+
+        return recommendedUavs;
+    }
+
+    /**
+     * 计算无人机与任务的匹配度分数
+     *
+     * @param uav 无人机信息
+     * @param task 任务信息
+     * @return 匹配度分数（0-100）
+     */
+    private double calculateUavMatchScore(Uav uav, UavTask task) {
+        double score = 0;
+
+        // 1. 基础适配性检查（不满足直接返回 0）
+        // 续航时间检查（公里转分钟，假设平均速度 10m/s = 36km/h）
+        double requiredFlightTime = task.getMaxDistance() * 60 / 36; // 转换为分钟
+        if (uav.getUavMaxFlightTime() == null || uav.getUavMaxFlightTime() < requiredFlightTime) {
+            return 0; // 续航不足，直接淘汰
+        }
+        score += 30; // 续航达标得 30 分
+
+        // 载重能力检查
+        if (task.getRequiredLoad() != null && task.getRequiredLoad() > 0) {
+            if (uav.getUavMaxLoad() == null || uav.getUavMaxLoad().doubleValue() < task.getRequiredLoad()) {
+                return 0; // 载重不足，直接淘汰
+            }
+            score += 25; // 载重达标得 25 分
+        } else {
+            score += 25; // 没有载重要求，默认得分
+        }
+
+        // 2. 紧急程度匹配（紧急任务优先选择续航长的）
+        if (task.getUrgency() != null) {
+            switch (task.getUrgency()) {
+                case 3: // 非常紧急
+                    // 优先选择续航时间最长的
+                    score += (uav.getUavMaxFlightTime() / 10.0); // 最多 10 分
+                    break;
+                case 2: // 紧急
+                    // 优先选择速度快的（这里简化处理，用续航代表速度）
+                    score += (uav.getUavMaxFlightTime() / 20.0); // 最多 5 分
+                    break;
+                default: // 普通
+                    score += 5; // 普通任务不需要额外加分
+                    break;
+            }
+        }
+
+        // 3. 距离适配性（避免大材小用）
+        double distanceFactor = 1.0;
+        if (task.getMaxDistance() != null && task.getMaxDistance() > 0) {
+            // 实际需要的续航是任务距离的 1.5 倍作为安全余量
+            double neededRange = task.getMaxDistance() * 1.5;
+            if (uav.getUavMaxFlightTime() != null) {
+                // 无人机续航（分钟）转换为公里数
+                double uavRange = uav.getUavMaxFlightTime() * 36 / 60;
+                if (uavRange >= neededRange && uavRange <= neededRange * 2) {
+                    distanceFactor = 1.0; // 完美匹配
+                    score += 20; // 完美匹配得 20 分
+                } else if (uavRange > neededRange * 2) {
+                    distanceFactor = 0.7; // 性能过剩
+                    score += 10; // 性能过剩得 10 分
+                } else {
+                    distanceFactor = 0.5; // 勉强够用
+                    score += 5; // 勉强够用得 5 分
+                }
+            }
+        }
+
+        // 4. 任务类型适配性
+        if (task.getTaskType() != null && !task.getTaskType().isEmpty()) {
+            // 如果无人机类型与任务类型匹配，加分
+            if (uav.getUavType() != null && uav.getUavType().contains(task.getTaskType())) {
+                score += 15; // 类型匹配得 15 分
+            } else {
+                score += 8; // 类型不匹配但也有基础分
+            }
+        }
+
+        return score;
+    }
+
+    /**
+     * 无人机评分内部类
+     */
+    private static class UavScore {
+        Uav uav;
+        double score;
+
+        public UavScore(Uav uav, double score) {
+            this.uav = uav;
+            this.score = score;
+        }
     }
 }

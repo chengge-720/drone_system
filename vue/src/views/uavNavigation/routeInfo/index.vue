@@ -1,14 +1,45 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { initDistanceChart } from '@/utils/chartInit'
+
+// 从 pathPlanning 传递过来的数据
+interface PathPoint {
+  lng: number
+  lat: number
+  alt?: number
+}
+
+interface AlgorithmResult {
+  name: string
+  distance: number
+  time: number
+  points: number
+  pathPoints: PathPoint[]
+}
+
+interface CompareResults {
+  astar: AlgorithmResult
+  dijkstra: AlgorithmResult
+  recommendation?: {
+    algorithm: string
+    score: number
+    reasons: string[]
+    advantages: string[]
+  }
+}
 
 // 路径信息数据
 const routeInfo = reactive({
-  totalDistance: 0, // 总距离
-  estimatedTime: 0, // 预计时间
-  waypoints: [], // 路径点
-  altitudeProfile: [], // 高度剖面
-  speedProfile: [] // 速度剖面
+  uavModel: '', // 无人机型号
+  algorithm: '', // 使用的算法
+  totalDistance: 0, // 总距离（米）
+  estimatedTime: 0, // 预计时间（秒）
+  pointCount: 0, // 路径点数
+  startCoord: '', // 起点坐标
+  endCoord: '', // 终点坐标
+  waypoints: [] as PathPoint[], // 路径点
+  compareResults: null as CompareResults | null // 对比结果
 })
 
 // 无人机参数
@@ -20,35 +51,129 @@ const droneParams = reactive({
   batteryVoltage: 14.8 // 电池电压 V
 })
 
-// 计算飞行参数
-const calculateFlightParams = () => {
-  // 模拟一些路径点数据
-  routeInfo.waypoints = [
-    { lng: 116.404, lat: 39.915, alt: 50, speed: 10 },
-    { lng: 116.406, lat: 39.917, alt: 80, speed: 12 },
-    { lng: 116.408, lat: 39.918, alt: 100, speed: 10 },
-    { lng: 116.410, lat: 39.920, alt: 60, speed: 8 }
-  ]
+// 图表引用
+const chartContainer = ref(null)
+const comparisonChartContainer = ref(null)
+let distanceChart = null
+let comparisonChart = null
+
+// 初始化图表
+const initCharts = () => {
+  if (!chartContainer.value || routeInfo.waypoints.length === 0) return
   
-  // 计算总距离（简化计算）
-  routeInfo.totalDistance = 2.5 // 公里
-  
-  // 计算预计时间
-  routeInfo.estimatedTime = (routeInfo.totalDistance * 1000) / droneParams.cruiseSpeed // 秒
-  
-  // 生成高度剖面数据
-  routeInfo.altitudeProfile = routeInfo.waypoints.map((point, index) => ({
-    x: index,
-    y: point.alt
-  }))
-  
-  // 生成速度剖面数据
-  routeInfo.speedProfile = routeInfo.waypoints.map((point, index) => ({
-    x: index,
-    y: point.speed
-  }))
-  
-  ElMessage.success('飞行参数计算完成')
+  // 导入 ECharts
+  import('echarts').then((echarts) => {
+    // 计算距离累积数据
+    const distances = [0]
+    for (let i = 1; i < routeInfo.waypoints.length; i++) {
+      const prev = routeInfo.waypoints[i - 1]
+      const curr = routeInfo.waypoints[i]
+      const dist = getDistanceFromLatLonInMeters(
+        prev.lat, prev.lng,
+        curr.lat, curr.lng
+      )
+      distances.push(distances[i - 1] + dist)
+    }
+    
+    // 创建距离图表
+    if (distanceChart) {
+      distanceChart.dispose()
+    }
+    
+    distanceChart = echarts.default.init(chartContainer.value)
+    
+    const option = {
+      title: {
+        text: '路径距离累积曲线',
+        left: 'center',
+        textStyle: {
+          color: '#333',
+          fontSize: 14,
+          fontWeight: 'bold'
+        }
+      },
+      tooltip: {
+        trigger: 'axis',
+        formatter: function(params: any) {
+          const point = routeInfo.waypoints[params[0].dataIndex]
+          return `
+            <div style="font-weight:bold;">点 #${params[0].dataIndex}</div>
+            经度：${point.lng.toFixed(6)}<br/>
+            纬度：${point.lat.toFixed(6)}<br/>
+            累计距离：${params[0].value.toFixed(1)} m
+          `
+        }
+      },
+      xAxis: {
+        type: 'index',
+        name: '路径点索引',
+        nameLocation: 'middle',
+        nameGap: 25,
+        axisLabel: {
+          color: '#666'
+        }
+      },
+      yAxis: {
+        type: 'value',
+        name: '累计距离 (米)',
+        axisLabel: {
+          color: '#666',
+          formatter: '{value} m'
+        },
+        splitLine: {
+          lineStyle: {
+            color: '#eee'
+          }
+        }
+      },
+      series: [{
+        name: '累计距离',
+        type: 'line',
+        data: distances,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        itemStyle: {
+          color: '#4D4FC3'
+        },
+        lineStyle: {
+          width: 3,
+          color: '#4D4FC3'
+        },
+        areaStyle: {
+          color: new echarts.default.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(77, 79, 195, 0.3)' },
+            { offset: 1, color: 'rgba(77, 79, 195, 0.05)' }
+          ])
+        }
+      }],
+      grid: {
+        left: '10%',
+        right: '5%',
+        bottom: '10%',
+        top: '15%'
+      }
+    }
+    
+    distanceChart.setOption(option)
+  })
+}
+
+// Haversine 公式计算两点间距离
+const getDistanceFromLatLonInMeters = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+  const R = 6371000
+  const dLat = deg2rad(lat2 - lat1)
+  const dLon = deg2rad(lon2 - lon1)
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+const deg2rad = (deg: number): number => {
+  return deg * (Math.PI / 180)
 }
 
 // 导出路航数据
@@ -70,8 +195,68 @@ const exportRouteData = () => {
   ElMessage.success('航路数据已导出')
 }
 
-// 初始化
-calculateFlightParams()
+// 监听窗口消息（从 pathPlanning 页面跳转过来时传递数据）
+window.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'ROUTE_DATA') {
+    const data = event.data.payload
+    
+    routeInfo.uavModel = data.uavModel || ''
+    routeInfo.algorithm = data.algorithm || ''
+    routeInfo.totalDistance = data.totalDistance || 0
+    routeInfo.estimatedTime = data.estimatedTime || 0
+    routeInfo.pointCount = data.pointCount || 0
+    routeInfo.startCoord = data.startCoord || ''
+    routeInfo.endCoord = data.endCoord || ''
+    routeInfo.waypoints = data.waypoints || []
+    routeInfo.compareResults = data.compareResults || null
+    
+    // 保存到 localStorage
+    localStorage.setItem('uav_route_data', JSON.stringify(data))
+    
+    console.log('📊 接收到路径数据:', routeInfo)
+    
+    // 初始化图表
+    setTimeout(() => {
+      initCharts()
+    }, 100)
+    
+    ElMessage.success('路径数据接收成功')
+  }
+})
+
+// 从 localStorage 加载路径规划数据
+const loadRouteData = () => {
+  try {
+    const savedData = localStorage.getItem('uav_route_data')
+    if (savedData) {
+      const data = JSON.parse(savedData)
+      
+      routeInfo.uavModel = data.uavModel || ''
+      routeInfo.algorithm = data.algorithm || ''
+      routeInfo.totalDistance = data.totalDistance || 0
+      routeInfo.estimatedTime = data.estimatedTime || 0
+      routeInfo.pointCount = data.pointCount || 0
+      routeInfo.startCoord = data.startCoord || ''
+      routeInfo.endCoord = data.endCoord || ''
+      routeInfo.waypoints = data.waypoints || []
+      routeInfo.compareResults = data.compareResults || null
+      
+      console.log('📊 加载路径数据:', routeInfo)
+      
+      // 初始化图表
+      setTimeout(() => {
+        initCharts()
+      }, 100)
+      
+      ElMessage.success('路径数据加载成功')
+    } else {
+      ElMessage.warning('暂无路径数据，请先进行路径规划')
+    }
+  } catch (error) {
+    console.error('加载路径数据失败:', error)
+    ElMessage.error('加载路径数据失败')
+  }
+}
 </script>
 
 <template>
