@@ -18,8 +18,6 @@ import '@/assets/styles/all.css'
 // 引入表格组件
 import VxeUIBase from 'vxe-pc-ui'
 import 'vxe-pc-ui/es/style.css'
-//引入百度地图组件
-import BaiduMap from 'v3-baidu-map'
 
 //分页组件
 import Pagination from '@/components/Pagination/index.vue'
@@ -48,11 +46,6 @@ app.component('IconSelect', IconSelect)
 //本地化配置，将框架组件语言设置为中文
 app.use(ElementPlus, {
     locale: zhCn,
-})
-
-//加载百度地图组件
-app.use(BaiduMap, {
-    ak:'lADgwetjBOCnODoMSTsU7fTcam57IkBi'
 })
 
 app.mount('#app')

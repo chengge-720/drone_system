@@ -4,6 +4,19 @@
  */
 
 import { PathAnimationManager } from './pathAnimation'
+import { pathLengthMeters3D, interpolateAlongPath } from './basicPathPlanner'
+import {
+  createPathLine3D,
+  updatePathLineGeometry,
+  lngLatAltToOverlayWorld,
+  disposePathLine,
+  decimatePathForLine
+} from './uav3DModel'
+import {
+  buildObstacleOverlayGroup,
+  updateObstacleOverlayGroupPositions,
+  disposeObstacleOverlayGroup
+} from './obstacle3DOverlay'
 
 /**
  * 飞行模拟配置
@@ -13,6 +26,14 @@ export const FLIGHT_CONFIG = {
   frameRate: 60,            // 帧率
   speedFactor: 1.0          // 速度系数
 }
+
+// 用户当前要求：暂停动画效果，只生产路径并静态渲染
+// 其它页面（如路径规划页）可以据此跳过额外的动画/渲染依赖请求
+export const ENABLE_ANIMATIONS = false
+
+// 3D 模式底图 Marker 已移除；此 base64 保留仅用于未来扩展
+const UAV_BMAPGL_ICON_DATA_URL =
+  'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNEQ0RkMzIiBzdHJva2Utd2lkdGg9IjIiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjgiLz48cGF0aCBkPSJNMTIgNHYyTTEyIDIwdjJNNCAxMmgyTTIwIDEyaC0yIi8+PC9zdmc+'
 
 /**
  * 2D 模式飞行模拟（流光路线 + 插值动画）
@@ -34,7 +55,8 @@ export const simulateFlight2D = async (
   flowAnimationRef,
   animationId,
   flattenPathCoordinates,
-  calculatePathStats
+  calculatePathStats,
+  renderOpts = {}
 ) => {
   if (!map || !pathPoints || pathPoints.length === 0) {
     console.error('❌ 无法开始 2D 飞行模拟：参数不完整')
@@ -43,6 +65,31 @@ export const simulateFlight2D = async (
   
   try {
     console.log('🎬 开始 2D 飞行模拟...')
+
+    // 动画暂停模式下：先清理可能存在的旧动画/旧 Marker，避免重复刷屏
+    if (!ENABLE_ANIMATIONS) {
+      try {
+        const flowId = flowAnimationRef?.value
+        if (typeof flowId === 'number') cancelAnimationFrame(flowId)
+        if (flowAnimationRef) flowAnimationRef.value = null
+      } catch {}
+      try {
+        const animId = animationId?.value
+        if (typeof animId === 'number') cancelAnimationFrame(animId)
+        if (animationId) animationId.value = null
+      } catch {}
+      try {
+        const m = uavIconMarker?.value || uavIconMarker
+        if (m?.setMap) m.setMap(null)
+        if (uavIconMarker?.value !== undefined) uavIconMarker.value = null
+      } catch {}
+      try {
+        const pl = pathPolyline?.value
+        if (Array.isArray(pl)) pl.forEach((p) => p?.setMap?.(null))
+        else if (pl?.setMap) pl.setMap(null)
+        if (pathPolyline) pathPolyline.value = null
+      } catch {}
+    }
     
     // 1. 数据清洗：扁平化路径坐标
     const flatPathCoords = flattenPathCoordinates(pathPoints)
@@ -57,32 +104,50 @@ export const simulateFlight2D = async (
     // 2. 计算路径参数
     const pathStats = calculatePathStats(flatPathCoords)
     
-    // 3. 绘制流光路线
-    await drawFlowPolyline(
-      map,
-      flatPathCoords,
-      uavIconMarker,
-      pathPolyline,
-      flowAnimationRef
-    )
-    
-    // 4. 创建动画管理器并启动动画
+    const failureDisplay = renderOpts?.failureDisplay || {}
+    const lineCoords =
+      failureDisplay?.enabled ? sampleFlatPathCoords(flatPathCoords, 14) : flatPathCoords
+
+    // 3. 绘制路线
+    await drawFlowPolyline(map, lineCoords, uavIconMarker, pathPolyline, flowAnimationRef, {
+      enableFlow: ENABLE_ANIMATIONS,
+      failureStyle: Boolean(failureDisplay?.enabled)
+    })
+
+    drawFailureMarkers(map, renderOpts, {
+      start: flatPathCoords[0],
+      failedEnd: flatPathCoords[flatPathCoords.length - 1]
+    })
+
+    if (!ENABLE_ANIMATIONS) {
+      console.log('✅ 路径已绘制（动画已暂停）')
+      return {
+        animationManager: null,
+        pathStats,
+        flatPathCoords
+      }
+    }
+
+    // 4. 创建动画管理器并启动动画（多层折线时只驱动最内层）
+    const polyForAnim = Array.isArray(pathPolyline.value)
+      ? pathPolyline.value[pathPolyline.value.length - 1]
+      : pathPolyline.value
     const animationManager = new PathAnimationManager(
       map,
       flatPathCoords,
       uavIconMarker,
-      pathPolyline.value,
+      polyForAnim,
       flowAnimationRef,
       animationId,
       { duration: FLIGHT_CONFIG.animationDuration }
     )
-    
+
     animationManager.createUavIconMarker()
     animationManager.startInterpolationAnimation()
     animationManager.startFlowAnimation()
-    
+
     console.log('✅ 2D 飞行模拟启动成功')
-    
+
     return {
       animationManager,
       pathStats,
@@ -107,8 +172,10 @@ export const drawFlowPolyline = async (
   flatPathCoords,
   uavIconMarker,
   pathPolyline,
-  flowAnimationRef
+  flowAnimationRef,
+  opts = {}
 ) => {
+  const { enableFlow = true, failureStyle = false } = opts
   if (!map) {
     console.error('❌ 地图实例不存在')
     return
@@ -119,120 +186,259 @@ export const drawFlowPolyline = async (
     return
   }
   
-  // 清除旧路径
-  if (pathPolyline.value) {
-    map.removeOverlay(pathPolyline.value)
+  // 清除旧路径（多层发光时曾只保存最内层，导致「清除路径」删不干净）
+  const prev = pathPolyline.value
+  if (Array.isArray(prev)) {
+    prev.forEach((p) => p?.setMap?.(null))
+  } else if (prev?.setMap) {
+    prev.setMap(null)
   }
-  
-  // 使用默认颜色（蓝色）
-  const color = '#3B82F6'
-  
+  pathPolyline.value = null
+
+  const color = failureStyle ? '#2563EB' : '#3B82F6'
+
   // 创建多层半透明线条实现发光效果
-  const layers = [
-    { width: 8, opacity: 0.1 },   // 外层：宽且淡
-    { width: 5, opacity: 0.3 },   // 中层
-    { width: 3, opacity: 0.8 }    // 内层：窄且实
-  ]
-  
-  layers.forEach((layer, index) => {
-    const polyline = new BMap.Polyline(
-      flatPathCoords.map(coord => new BMap.Point(coord.lng, coord.lat)),
-      {
-        strokeColor: color,
-        strokeWeight: layer.width,
-        strokeOpacity: layer.opacity,
-        enableClicking: false
-      }
-    )
-    map.addOverlay(polyline)
-    
-    // 保存最内层用于流动动画
-    if (index === layers.length - 1) {
-      pathPolyline.value = polyline
-    }
+  const layers = failureStyle
+    ? [{ width: 4, opacity: 0.9 }]
+    : [
+        { width: 8, opacity: 0.1 },
+        { width: 5, opacity: 0.3 },
+        { width: 3, opacity: 0.8 }
+      ]
+
+  const created = []
+  layers.forEach((layer) => {
+    const polyline = new AMap.Polyline({
+      path: flatPathCoords.map(coord => [coord.lng, coord.lat]),
+      strokeColor: color,
+      strokeWeight: layer.width,
+      strokeOpacity: layer.opacity,
+      // 暂停动画时画实线，避免 AMap canvas 频繁重绘触发性能/警告
+      ...(enableFlow ? { strokeDasharray: [0, 100] } : {}),
+      map
+    })
+    created.push(polyline)
   })
+  pathPolyline.value = created
   
   console.log('✅ 流光路线绘制完成，总层数:', layers.length)
 }
 
+const sampleFlatPathCoords = (coords, maxPoints = 14) => {
+  if (!Array.isArray(coords) || coords.length <= maxPoints) return coords || []
+  const sampled = []
+  const n = coords.length
+  for (let i = 0; i < maxPoints; i++) {
+    const idx = Math.round((i * (n - 1)) / (maxPoints - 1))
+    sampled.push(coords[idx])
+  }
+  return sampled
+}
+
+const clearMarkersRef = (markersRef) => {
+  const prev = markersRef?.value
+  if (!Array.isArray(prev)) return
+  prev.forEach((m) => m?.setMap?.(null))
+  markersRef.value = []
+}
+
+const drawFailureMarkers = (map, renderOpts, points) => {
+  const failureDisplay = renderOpts?.failureDisplay || {}
+  const markersRef = renderOpts?.failureMarkersRef
+  if (!markersRef) return
+  clearMarkersRef(markersRef)
+  if (!failureDisplay?.enabled || !map || !points?.start || !points?.failedEnd) return
+
+  const goal = failureDisplay.goal
+  const mk = (lng, lat, color) =>
+    new AMap.CircleMarker({
+      center: [lng, lat],
+      radius: 7,
+      strokeColor: '#FFFFFF',
+      strokeWeight: 2,
+      fillColor: color,
+      fillOpacity: 0.95,
+      zIndex: 160,
+      map
+    })
+
+  const markers = []
+  markers.push(mk(points.start.lng, points.start.lat, '#EF4444'))
+  if (goal?.lng != null && goal?.lat != null) markers.push(mk(goal.lng, goal.lat, '#EF4444'))
+  markers.push(mk(points.failedEnd.lng, points.failedEnd.lat, '#2563EB'))
+  markersRef.value = markers
+}
+
 /**
- * 3D模式飞行模拟
- * @param {Array} pathPoints - 路径点数组
- * @param {THREE.Group} uav3DModel - 3D 无人机模型
- * @param {Object} map - 地图实例
- * @param {HTMLElement} container - 地图容器
- * @param {Function} updateCamera - 更新相机函数
- * @param {Function} renderThreeJS - 渲染 Three.js 函数
- * @returns {Function} 停止动画的函数
+ * 3D 模式：Three 叠层，按弧长插值（含 alt），航线为世界坐标折线
+ * @param {Array<{ lng: number, lat: number, alt: number }>} pathPoints
+ * @param {THREE.Group} uav3DModel
+ * @param {Object} map 地图实例（需支持 lngLatToContainer 投影）
+ * @param {HTMLElement} container 地图挂载容器（与 pointToOverlayPixel 一致）
+ * @param {{ threeScene: THREE.Scene, camera: THREE.Camera, renderThreeJS: () => void, speedMps?: number, obstacles?: object[] }} deps
+ * @returns {() => void} 停止动画并清理叠层辅助对象
  */
-export const simulateFlight3D = (
-  pathPoints,
-  uav3DModel,
-  map,
-  container,
-  updateCamera,
-  renderThreeJS
-) => {
-  if (!pathPoints || pathPoints.length === 0 || !uav3DModel || !map) {
+export const simulateFlight3D = (pathPoints, uav3DModel, map, container, deps) => {
+  const { threeScene, camera, renderThreeJS, speedMps = 42, obstacles } = deps || {}
+
+  if (!pathPoints || pathPoints.length === 0 || !uav3DModel || !map || !container) {
     console.error('❌ 无法开始 3D 飞行模拟：参数不完整')
     return () => {}
   }
   
-  let index = 0
-  let animationId = null
-  let isRunning = true
-  
-  const animate = () => {
-    if (!isRunning) return
-    
-    if (index < pathPoints.length - 1) {
-      const currentPoint = pathPoints[index]
-      const nextPoint = pathPoints[index + 1]
-      
-      // 转换为屏幕坐标
-      const currentPixel = map.pointToOverlayPixel(
-        new BMapGL.Point(currentPoint.lng, currentPoint.lat)
-      )
-      const nextPixel = map.pointToOverlayPixel(
-        new BMapGL.Point(nextPoint.lng, nextPoint.lat)
-      )
-      
-      // 更新无人机位置和旋转
-      const dx = nextPixel.x - currentPixel.x
-      const dy = nextPixel.y - currentPixel.y
-      const angle = Math.atan2(dy, dx) + Math.PI / 2
-      
-      uav3DModel.position.set(
-        (currentPixel.x - container.clientWidth / 2) / 100,
-        -(currentPixel.y - container.clientHeight / 2) / 100,
-        0
-      )
-      uav3DModel.rotation.z = angle
-      
-      // 移动到下一个点
-      index++
-      
-      // 更新相机位置
-      updateCamera(new BMapGL.Point(currentPoint.lng, currentPoint.lat))
-      
-      // 渲染场景
-      renderThreeJS()
-      
-      // 继续动画
-      animationId = requestAnimationFrame(animate)
+  // 确保投影函数存在：AMap 使用 lngLatToContainer
+  if (typeof map?.lngLatToContainer !== 'function') {
+    console.warn('⏸️ 3D 叠层缺少 AMap 投影能力（lngLatToContainer 不存在），已跳过 3D 动画')
+    return () => {}
+  }
+  if (!threeScene || !camera || typeof renderThreeJS !== 'function') {
+    console.error('❌ 3D 飞行模拟缺少 threeScene / camera / renderThreeJS')
+    return () => {}
+  }
+
+  if (threeScene.userData.__pathLine3D) {
+    disposePathLine(threeScene.userData.__pathLine3D, threeScene)
+    threeScene.userData.__pathLine3D = null
+  }
+  disposeObstacleOverlayGroup(threeScene)
+
+  const pathLine = createPathLine3D(threeScene, pathPoints, map, container)
+  threeScene.userData.__pathLine3D = pathLine
+
+  if (obstacles?.length) {
+    const obsGroup = buildObstacleOverlayGroup(obstacles, pathPoints, map, container)
+    if (obsGroup) {
+      threeScene.add(obsGroup)
+      threeScene.userData.__obstacleOverlayGroup = obsGroup
     }
   }
-  
-  // 启动动画
-  animate()
-  console.log('🚁 3D 飞行模拟已启动')
-  
-  // 返回停止动画的函数
+
+  // 3D 模式：底图地面投影折线/Marker 暂不渲染（仅依赖 Three 叠层）
+
+  const totalLen = Math.max(1, pathLengthMeters3D(pathPoints))
+  const durationMs = Math.min(180000, Math.max(6000, (totalLen / speedMps) * 1000))
+
+  let animationId = null
+  let isRunning = true
+  let t0 = performance.now()
+  let currentS = 0
+  let mapViewDebounce = null
+  /** 机头朝向平滑，避免前瞻过短时 atan2 抖动 */
+  let smoothedHeading = 0
+
+  const midS = Math.min(totalLen * 0.4, totalLen)
+  const midPos = interpolateAlongPath(pathPoints, midS) || pathPoints[Math.floor(pathPoints.length / 2)]
+  const camOffset = { x: 0, y: 0, z: 0 }
+  const recalcCamOffset = () => {
+    const w = lngLatAltToOverlayWorld(
+      container,
+      map,
+      midPos.lng,
+      midPos.lat,
+      (midPos.alt ?? 0) + 40
+    )
+    camOffset.x = w.x - 10
+    camOffset.y = w.y + 22
+    camOffset.z = w.z + 14
+  }
+  recalcCamOffset()
+
+  // 暂停动画：不启动 RAF/事件监听，仅渲染一次并将 UAV 放到起点
+  if (!ENABLE_ANIMATIONS) {
+    const first = pathPoints[0]
+    const posWorld = lngLatAltToOverlayWorld(container, map, first.lng, first.lat, first.alt ?? 0)
+    try {
+      if (uav3DModel?.position?.set) {
+        uav3DModel.position.set(posWorld.x, posWorld.y, posWorld.z)
+      }
+      camera.position.set(camOffset.x, camOffset.y, camOffset.z)
+      camera.lookAt(posWorld.x, posWorld.y + 0.35, posWorld.z)
+      renderThreeJS()
+    } catch {}
+    return () => {}
+  }
+
+  /** 仅更新无人机（每帧）：相机固定在航线侧上方俯视，避免跟拍导致的剧烈晃动 */
+  const refreshUavCameraOnly = (s) => {
+    const pos = interpolateAlongPath(pathPoints, s)
+    if (!pos) return
+    const posWorld = lngLatAltToOverlayWorld(container, map, pos.lng, pos.lat, pos.alt ?? 0)
+    uav3DModel.position.set(posWorld.x, posWorld.y, posWorld.z)
+
+    const lookAhead = Math.max(18, totalLen * 0.1)
+    const lookS = Math.min(s + lookAhead, totalLen)
+    const ahead = interpolateAlongPath(pathPoints, lookS)
+    const wAhead = lngLatAltToOverlayWorld(container, map, ahead.lng, ahead.lat, ahead.alt ?? 0)
+    const dx = wAhead.x - posWorld.x
+    const dz = wAhead.z - posWorld.z
+    let heading = smoothedHeading
+    if (dx * dx + dz * dz > 0.0004) {
+      heading = Math.atan2(dx, dz)
+      smoothedHeading = smoothedHeading * 0.88 + heading * 0.12
+    }
+    uav3DModel.rotation.set(0, smoothedHeading, 0)
+
+    camera.position.set(camOffset.x, camOffset.y, camOffset.z)
+    camera.lookAt(posWorld.x, posWorld.y + 0.35, posWorld.z)
+    renderThreeJS()
+  }
+
+  /** 地图平移/缩放后：同步空中折线顶点与当前像素投影 */
+  const refreshPathLineAndUav = (s) => {
+    if (pathLine) updatePathLineGeometry(pathLine, pathPoints, map, container)
+    updateObstacleOverlayGroupPositions(threeScene.userData.__obstacleOverlayGroup, map, container)
+    recalcCamOffset()
+    refreshUavCameraOnly(s)
+  }
+
+  /** 防抖：程序化 centerAndZoom 会连续触发 moveend，避免叠层每帧重算抽搐 */
+  const onMapViewChange = () => {
+    if (mapViewDebounce) clearTimeout(mapViewDebounce)
+    mapViewDebounce = setTimeout(() => {
+      mapViewDebounce = null
+      refreshPathLineAndUav(currentS)
+    }, 100)
+  }
+
+  if (map.addEventListener) {
+    map.addEventListener('moveend', onMapViewChange)
+    map.addEventListener('zoomend', onMapViewChange)
+  }
+
+  const tick = (now) => {
+    if (!isRunning) return
+    const elapsed = now - t0
+    currentS = (elapsed / durationMs) * totalLen
+    if (currentS >= totalLen) {
+      currentS = totalLen
+      refreshPathLineAndUav(currentS)
+      isRunning = false
+      console.log('🚁 3D 飞行模拟完成')
+      return
+    }
+    refreshUavCameraOnly(currentS)
+    animationId = requestAnimationFrame(tick)
+  }
+
+  animationId = requestAnimationFrame(tick)
+  console.log('🚁 3D 飞行模拟已启动（弧长约', Math.round(totalLen), 'm）')
+
   return () => {
     isRunning = false
-    if (animationId) {
-      cancelAnimationFrame(animationId)
+    if (animationId) cancelAnimationFrame(animationId)
+    if (mapViewDebounce) {
+      clearTimeout(mapViewDebounce)
+      mapViewDebounce = null
     }
+    if (map.removeEventListener) {
+      map.removeEventListener('moveend', onMapViewChange)
+      map.removeEventListener('zoomend', onMapViewChange)
+    }
+    if (threeScene.userData.__pathLine3D) {
+      disposePathLine(threeScene.userData.__pathLine3D, threeScene)
+      threeScene.userData.__pathLine3D = null
+    }
+    disposeObstacleOverlayGroup(threeScene)
     console.log('⏹️ 3D 飞行模拟已停止')
   }
 }
@@ -260,9 +466,13 @@ export const stopAllFlightAnimations = (
     stop3DAnimation()
   }
   
-  // 取消流光动画
-  if (flowAnimationRef.value) {
-    cancelAnimationFrame(flowAnimationRef.value)
+  const fv = flowAnimationRef?.value
+  if (fv != null) {
+    if (typeof fv === 'number') {
+      cancelAnimationFrame(fv)
+    } else if (typeof fv === 'object' && typeof fv.stop === 'function') {
+      fv.stop()
+    }
     flowAnimationRef.value = null
   }
   

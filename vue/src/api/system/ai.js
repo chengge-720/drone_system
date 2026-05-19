@@ -1,17 +1,21 @@
 import request from '@/utils/request.js'
 
 /**
- * 发送消息到豆包 AI
+ * 发送消息到大模型（后端 OpenAI 兼容接口）
  * @param {string} message - 用户输入的消息
- * @returns {Promise} - 返回 Promise 对象
+ * @param {Object} options - 可选项：{ action, confirmToken }
+ * @returns {Promise} - resolve 为 AjaxResult：data.reply 为正文，data.taskCreated 等见后端约定
  */
-export function sendMessageToAI(message) {
+export function sendMessageToAI(message, options = {}) {
+  const payload = {
+    message: message
+  }
+  if (options.action) payload.action = options.action
+  if (options.confirmToken) payload.confirmToken = options.confirmToken
   return request({
     url: '/api/ai/chat',
     method: 'post',
-    data: {
-      message: message
-    }
+    data: payload
   })
 }
 

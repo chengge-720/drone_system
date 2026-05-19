@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import {computed} from "vue";
-import AppLink from "@/views/layout/components/Sidebar/AppLink.vue";
-import SvgIcon from "@/components/SvgIcon/index.vue";
+import { computed } from 'vue'
+import SvgIcon from '@/components/SvgIcon/index.vue'
 
 const props = defineProps({
   //菜单项的数据对象
@@ -75,21 +74,23 @@ const resolvePath = (routePath) => {
   <div v-if="!item.hidden">
     <!-- 当前菜单项只需要显示一个子项 -->
     <template v-if="shouldShowSingleItem">
-      <app-link :to="singleItemPath">
-        <el-menu-item :index="singleItemPath">
-          <svg-icon v-if="onlyOneChild.meta || item.meta" :icon-class="(onlyOneChild.meta && onlyOneChild.meta.icon) || (item.meta && item.meta.icon)"
-                    style="margin-right: 10px"/>
-            <template #title>
-              <span style="margin-left: 2px">
-                {{onlyOneChild.meta && onlyOneChild.meta.title || ''}}
-              </span>
-            </template>
-        </el-menu-item>
-      </app-link>
+      <!-- 父级 el-menu 已开启 router，勿再包 router-link，否则 Menu 内部 ref 在卸载时会读到 null -->
+      <el-menu-item :index="singleItemPath">
+        <svg-icon
+          v-if="onlyOneChild.meta || item.meta"
+          :icon-class="(onlyOneChild.meta && onlyOneChild.meta.icon) || (item.meta && item.meta.icon)"
+          style="margin-right: 10px"
+        />
+        <template #title>
+          <span style="margin-left: 2px">
+            {{ (onlyOneChild.meta && onlyOneChild.meta.title) || '' }}
+          </span>
+        </template>
+      </el-menu-item>
     </template>
 
-    <!-- 当前菜单项需要显示子菜单 -->
-    <el-sub-menu v-else :index="resolvePath(item.path)" teleported>
+    <!-- 勿写 teleported：会强制所有层级 appendTo body，递归子菜单卸载时易触发 Vue setRef exposed 报错 -->
+    <el-sub-menu v-else :index="resolvePath(item.path)" :teleported="false">
       <template v-if="item.meta" #title>
         <svg-icon v-if="item.meta && item.meta.icon" :icon-class="item.meta.icon" style="margin-right: 10px"/>
         <span style="margin-left: 2px">
@@ -97,11 +98,13 @@ const resolvePath = (routePath) => {
         </span>
       </template>
       <!-- 递归渲染子项 -->
-      <sidebar-item v-for="child in item.children"
-                    :key="child.path"
-                    :item="child"
-                    :base-path="resolvePath(child.path)"
-                    is-next/>
+      <sidebar-item
+        v-for="(child, cIndex) in item.children"
+        :key="`${resolvePath(item.path)}-${child.path}-${cIndex}`"
+        :item="child"
+        :base-path="resolvePath(child.path)"
+        is-next
+      />
     </el-sub-menu>
   </div>
 </template>

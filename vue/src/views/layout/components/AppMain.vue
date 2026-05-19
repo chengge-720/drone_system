@@ -3,11 +3,11 @@
 </script>
 
 <template>
-<div style="padding: 16px">
+<div class="app-main">
 
   
   <router-view v-slot="{ Component, route }">
-    <el-card style="min-height: calc(100vh - 64px)">
+    <el-card class="app-main__card">
       <div v-if="!Component">
         <p>⚠暂无匹配的组件</p>
         <p>当前路径: {{ route.path }}</p>
@@ -24,5 +24,15 @@
 </template>
 
 <style scoped>
+.app-main{
+  padding: 16px 18px 22px;
+}
 
+.app-main__card{
+  min-height: calc(100vh - var(--layout-header-height, 60px) - 28px);
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+}
 </style>

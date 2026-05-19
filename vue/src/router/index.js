@@ -93,6 +93,14 @@ export const constantRouters = [
         path: 'taskInfo',
         component: () => import('@/views/uavInfo/taskInfo/index.vue'),
       },
+      {
+        path: 'taskPlanning',
+        component: () => import('@/views/uavInfo/taskPlanning/index.vue'),
+        meta: {
+          title: '任务规划',
+          icon: '路径规划',
+        },
+      },
     ]
   },
   {
@@ -106,6 +114,17 @@ export const constantRouters = [
       {
         path: 'routeInfo',
         component: () => import('@/views/uavNavigation/routeInfo/index.vue'),
+        meta: { title: '路径信息' }
+      },
+      {
+        path: 'pathPlanning',
+        component: () => import('@/views/uavNavigation/pathPlanning/index.vue'),
+        meta: { title: '路径规划' }
+      },
+      {
+        path: 'algorithmCompare',
+        component: () => import('@/views/uavNavigation/algorithmCompare/index.vue'),
+        meta: { title: '算法对比' }
       },
     ]
   },

@@ -1,15 +1,32 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue"
+import { ref, onMounted, onUnmounted } from "vue"
+import { useRouter } from 'vue-router'
 import { selectTaskList, insertTask, updateTask, deleteTaskByTaskIds, getAvailableUavs, recommendUavs } from '@/api/system/task.js'
-import { selectUavList, planPath as apiPlanPath } from '@/api/system/uav.js'
+import { selectUavList } from '@/api/system/uav.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Document, List, Edit, Clock, Delete, RefreshLeft, Plus, Close, Check, RefreshRight, MapLocation, VideoCamera } from '@element-plus/icons-vue'
+import {
+  clearExecutionRecord,
+  clearPlanningSession,
+  getExecutionRemainSeconds,
+  loadExecutionRecord
+} from '@/utils/taskExecutionStorage'
 import {VxeModal} from "vxe-pc-ui";
 import 'vxe-pc-ui/lib/style.css'
+import { getDistanceFromLatLonInM, loadNoFlyZones, drawNoFlyZones } from '@/utils/noFlyZoneService.js'
+import { getGeoPoint } from '@/utils/mapInitializer'
+
+const router = useRouter()
+
+const goToTaskPlanning = (taskId: number) => {
+  router.push({ path: '/uavInfo/taskPlanning', query: { taskId } })
+}
 
 // 任务列表数据
 const taskList = ref([])
 const total = ref(0)
+const executionCountdowns = ref<Record<number, number>>({})
+let executionCountdownTimer: number | null = null
 const query = ref({
   pageNum: 1,
   pageSize: 5,
@@ -48,6 +65,8 @@ const taskTypeOptions = [
   { label: '测绘', value: '测绘' },
   { label: '航拍', value: '航拍' },
   { label: '巡检', value: '巡检' },
+  { label: '道路巡检', value: '道路巡检' },
+  { label: '水域巡检', value: '水域巡检' },
   { label: '其他', value: '其他' }
 ]
 
@@ -83,11 +102,76 @@ const getTaskList = async () => {
     if (taskList.value.length > 0) {
       console.log('🎉 有数据，应该显示卡片了!')
     }
+    await refreshExecutionCountdowns()
   } catch (error) {
     console.error('❌ 获取任务列表失败:', error)
     ElMessage.error('获取任务列表失败：' + (error as Error).message)
   }
 }
+
+const formatCountdown = (seconds: number) => {
+  const s = Math.max(0, Math.ceil(seconds || 0))
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+
+const refreshExecutionCountdowns = async () => {
+  const next: Record<number, number> = {}
+  let changed = false
+  for (const task of taskList.value || []) {
+    const remain = getExecutionRemainSeconds(task.taskId)
+    const rec = loadExecutionRecord(task.taskId)
+    if (!rec) continue
+    if (remain > 0) {
+      next[task.taskId] = remain
+      if (task.status !== 2) {
+        task.status = 2
+      }
+    } else {
+      clearExecutionRecord(task.taskId)
+      if (task.status === 2) {
+        await updateTask({ ...task, status: 3 })
+        task.status = 3
+        changed = true
+      }
+    }
+  }
+  executionCountdowns.value = next
+  if (changed) getTaskList()
+}
+
+const terminateTask = (row: any) => {
+  ElMessageBox.confirm(
+    '确定要终止该任务吗？终止后状态将恢复为「待执行」，可重新规划并执行。',
+    '终止任务',
+    {
+      confirmButtonText: '终止',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  )
+    .then(async () => {
+      try {
+        clearExecutionRecord(row.taskId)
+        clearPlanningSession(row.taskId)
+        const resp = await updateTask({ ...row, status: 1 })
+        if (resp?.code === 200) {
+          ElMessage.success('任务已终止，状态已恢复为待执行')
+          const copy = { ...executionCountdowns.value }
+          delete copy[row.taskId]
+          executionCountdowns.value = copy
+          getTaskList()
+        } else {
+          ElMessage.error(resp?.msg || '终止任务失败')
+        }
+      } catch (e: any) {
+        ElMessage.error(e?.message || '终止任务失败')
+      }
+    })
+    .catch(() => {})
+}
+
+const isTaskExecuting = (task: any) =>
+  task?.status === 2 || Boolean(executionCountdowns.value[task?.taskId])
 
 // 搜索任务
 const searchTask = () => {
@@ -127,22 +211,40 @@ const openTaskDialog = () => {
 
 // 初始化地图
 const initMap = () => {
-  if (typeof BMap !== 'undefined' && mapContainer.value) {
-    map.value = new BMap.Map(mapContainer.value)
-    const point = new BMap.Point(115.892151, 28.676493) // 南昌
-    map.value.centerAndZoom(point, 13)
-    map.value.enableScrollWheelZoom(true)
-    map.value.addControl(new BMap.NavigationControl())
-    map.value.addControl(new BMap.ScaleControl())
+  if (typeof AMap !== 'undefined' && mapContainer.value) {
+    map.value = new AMap.Map(mapContainer.value, {
+      viewMode: '2D',
+      center: [115.892151, 28.676493], // 南昌
+      zoom: 13,
+      resizeEnable: true
+    })
+    // Scale 在部分 JSAPI 版本里可能不可用/不可 new，做保护避免阻断页面
+    try {
+      const ScaleCtor = AMap.Scale || AMap.ScaleControl
+      if (typeof ScaleCtor === 'function') {
+        map.value.addControl(new ScaleCtor())
+      }
+    } catch {}
+    void renderNoFlyZones()
+  }
+}
+
+const renderNoFlyZones = async () => {
+  if (!map.value) return
+  try {
+    const zones = await loadNoFlyZones()
+    drawNoFlyZones(map.value, zones)
+  } catch (e) {
+    console.warn('禁飞区加载失败:', e)
   }
 }
 
 // 搜索地点
 const searchLocation = (location, callback) => {
-  if (map.value) {
-    const geocoder = new BMap.Geocoder()
-    geocoder.getPoint(location, callback, '南昌市')
-  }
+  if (!map.value) return
+  getGeoPoint(location, map.value, '南昌市')
+    .then((pt) => callback(pt))
+    .catch(() => callback(null))
 }
 
 // 计算路径并获取可用无人机
@@ -161,8 +263,10 @@ const calculatePathAndGetUavs = async () => {
       searchLocation(taskForm.value.startLocation, (startPointObj) => {
         if (startPointObj) {
           startPoint.value = startPointObj
-          const startMarker = new BMap.Marker(startPointObj)
-          map.value.addOverlay(startMarker)
+          const startMarker = new AMap.Marker({
+            position: [startPointObj.lng, startPointObj.lat],
+            map: map.value
+          })
           resolve()
         } else {
           reject(new Error('起点地址解析失败'))
@@ -175,8 +279,10 @@ const calculatePathAndGetUavs = async () => {
       searchLocation(taskForm.value.endLocation, (endPointObj) => {
         if (endPointObj) {
           endPoint.value = endPointObj
-          const endMarker = new BMap.Marker(endPointObj)
-          map.value.addOverlay(endMarker)
+          const endMarker = new AMap.Marker({
+            position: [endPointObj.lng, endPointObj.lat],
+            map: map.value
+          })
           resolve()
         } else {
           reject(new Error('终点地址解析失败'))
@@ -185,15 +291,24 @@ const calculatePathAndGetUavs = async () => {
     })
 
     // 先绘制直线路径（用于快速预览）
-    pathLine.value = new BMap.Polyline([startPoint.value, endPoint.value], {
+    pathLine.value = new AMap.Polyline({
+      path: [
+        [startPoint.value.lng, startPoint.value.lat],
+        [endPoint.value.lng, endPoint.value.lat]
+      ],
       strokeColor: '#4D4FC3',
       strokeWeight: 5,
-      strokeOpacity: 0.8
+      strokeOpacity: 0.8,
+      map: map.value
     })
-    map.value.addOverlay(pathLine.value)
 
     // 计算直线距离
-    const straightDistance = map.value.getDistance(startPoint.value, endPoint.value)
+    const straightDistance = getDistanceFromLatLonInM(
+      startPoint.value.lat,
+      startPoint.value.lng,
+      endPoint.value.lat,
+      endPoint.value.lng
+    )
     
     // 方案 2：增加安全系数来估算实际飞行距离
     // 考虑因素：建筑物绕行、禁飞区规避、气象影响、地形障碍等
@@ -230,65 +345,71 @@ const calculatePathAndGetUavs = async () => {
   }
 }
 
-// 【新增】调用后端 API 进行详细路径规划（简化版预览）
+// 规划真实路径（优先 AMap Driving；不可用时保持直线预览）
 const planDetailedPath = async (start, end) => {
   try {
-    console.log('🗺️ 开始简化版路径规划...')
-    
-    const requestData = {
-      startLng: start.lng,
-      startLat: start.lat,
-      endLng: end.lng,
-      endLat: end.lat,
-      uavId: null, // 发布任务时可能还没选择无人机
-      algorithm: 2 // 默认使用迪杰斯特拉算法
+    console.log('🗺️ 开始简化版路径规划（AMap Driving）...')
+    if (!map.value || typeof AMap === 'undefined') {
+      throw new Error('AMap 未加载，无法规划真实路径')
     }
-    
-    console.log('🗺️ 请求后端 API，参数:', requestData)
-    
-    const response = await apiPlanPath(requestData)
-    
-    if (response.code === 200 && response.data) {
-      const pathData = response.data
-      console.log('✅ 简化版路径规划成功:', pathData)
-      
-      // 如果有真实路径数据，更新显示
-      if (pathData.pathPoints && pathData.pathPoints.length > 0) {
-        // 清除之前的直线路径
-        if (pathLine.value) {
-          map.value.removeOverlay(pathLine.value)
+
+    const ensureDriving = () =>
+      new Promise<void>((r) => {
+        if (!AMap || typeof AMap.plugin !== 'function') return r()
+        AMap.plugin(['AMap.Driving'], () => r())
+      })
+
+    await ensureDriving()
+    if (typeof AMap.Driving !== 'function') {
+      throw new Error('AMap.Driving 未就绪')
+    }
+
+    const driving = new AMap.Driving({ map: null })
+    const { coords, distanceM } = await new Promise<any>((resolve, reject) => {
+      driving.search([start.lng, start.lat], [end.lng, end.lat], {}, (status, result) => {
+        const ok = status === 'complete' || result?.info === 'OK' || result?.info === 'OK.'
+        if (!ok) {
+          reject(new Error('高德地图路线规划失败'))
+          return
         }
-        
-        // 绘制真实路径（橙色表示真实路径）
-        const realPathCoords = pathData.pathPoints.map((p: any) => 
-          new BMap.Point(p.lng, p.lat)
-        )
-        
-        pathLine.value = new BMap.Polyline(realPathCoords, {
-          strokeColor: '#F59E0B', // 橙色
-          strokeWeight: 6,
-          strokeOpacity: 0.9
-        })
-        map.value.addOverlay(pathLine.value)
-        
-        // 使用真实距离更新表单（如果后端返回了距离）
-        if (pathData.distance && pathData.distance > 0) {
-          const REAL_DISTANCE = pathData.distance
-          taskForm.value.maxDistance = (REAL_DISTANCE / 1000).toFixed(2)
-          
-          // 重新计算时间
-          const estimatedTimeSeconds = (REAL_DISTANCE / 10) * 1.2 // 真实路径只需要 20% 余量
-          taskForm.value.estimatedTime = Math.round(estimatedTimeSeconds / 60)
-          
-          console.log('🔄 已使用真实路径距离:', taskForm.value.maxDistance, 'km')
-          console.log('🔄 已更新预估时间:', taskForm.value.estimatedTime, 'min')
-          
-          ElMessage.success(`已获取真实飞行路径（${taskForm.value.maxDistance} km）`)
+        const steps = result.routes?.[0]?.steps || []
+        const raw: number[][] = []
+        for (const step of steps) {
+          const path = step?.path || []
+          for (const p of path) {
+            const lng = Array.isArray(p) ? p[0] : typeof p?.getLng === 'function' ? p.getLng() : p?.lng
+            const lat = Array.isArray(p) ? p[1] : typeof p?.getLat === 'function' ? p.getLat() : p?.lat
+            if (lng != null && lat != null && !Number.isNaN(Number(lng)) && !Number.isNaN(Number(lat))) {
+              raw.push([Number(lng), Number(lat)])
+            }
+          }
         }
-      }
-    } else {
-      console.warn('⚠️ 路径规划 API 返回异常:', response)
-      throw new Error('路径规划 API 返回异常')
+        const d = Number(result.routes?.[0]?.distance || 0) || 0
+        resolve({ coords: raw, distanceM: d })
+      })
+    })
+
+    if (!Array.isArray(coords) || coords.length < 2) {
+      throw new Error('高德地图返回空路径')
+    }
+
+    if (pathLine.value) {
+      pathLine.value.setMap?.(null)
+    }
+    pathLine.value = new AMap.Polyline({
+      path: coords,
+      strokeColor: '#F59E0B',
+      strokeWeight: 6,
+      strokeOpacity: 0.9,
+      map: map.value
+    })
+
+    // 使用 Driving 的 distance 更新表单（米）
+    if (distanceM > 0) {
+      taskForm.value.maxDistance = (distanceM / 1000).toFixed(2)
+      const estimatedTimeSeconds = (distanceM / 10) * 1.2
+      taskForm.value.estimatedTime = Math.round(estimatedTimeSeconds / 60)
+      ElMessage.success(`已获取真实飞行路径（${taskForm.value.maxDistance} km）`)
     }
   } catch (error) {
     console.error('❌ 简化版路径规划失败:', error)
@@ -358,7 +479,8 @@ const getAvailableUavList = async (distance) => {
 // 清除地图标记
 const clearMapMarkers = () => {
   if (map.value) {
-    map.value.clearOverlays()
+    map.value.clearMap?.()
+    void renderNoFlyZones()
     startPoint.value = null
     endPoint.value = null
     pathLine.value = null
@@ -375,7 +497,16 @@ const submitTask = async () => {
   try {
     let response
     if (taskForm.value.taskId) {
-      // 修改任务
+      if (isTaskExecuting(taskForm.value)) {
+        ElMessage.warning('任务执行中，请先在列表中终止任务后再编辑')
+        return
+      }
+      // 已完成任务重新发布后重置为待执行，并清除本地规划缓存
+      if (taskForm.value.status === 3) {
+        taskForm.value.status = 1
+        clearPlanningSession(taskForm.value.taskId)
+        clearExecutionRecord(taskForm.value.taskId)
+      }
       response = await updateTask(taskForm.value)
     } else {
       // 新增任务
@@ -397,6 +528,10 @@ const submitTask = async () => {
 
 // 编辑任务
 const handleUpdate = (row) => {
+  if (isTaskExecuting(row)) {
+    ElMessage.warning('任务执行中，请先终止任务后再编辑')
+    return
+  }
   // 填充表单数据
   taskForm.value = {
     taskId: row.taskId,
@@ -451,6 +586,16 @@ const handleDelete = (row) => {
 // 组件挂载时加载任务列表
 onMounted(() => {
   getTaskList()
+  executionCountdownTimer = window.setInterval(refreshExecutionCountdowns, 1000)
+  window.addEventListener('uav-vector-regions-changed', renderNoFlyZones)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('uav-vector-regions-changed', renderNoFlyZones)
+  if (executionCountdownTimer) {
+    window.clearInterval(executionCountdownTimer)
+    executionCountdownTimer = null
+  }
 })
 
 // ========== 辅助函数 ==========
@@ -481,6 +626,8 @@ const getTaskTypeColor = (type: string) => {
     '测绘': '#a4ddd4',
     '航拍': '#a4ddd4',
     '巡检': '#a4ddd4',
+    '道路巡检': '#a4ddd4',
+    '水域巡检': '#34d399',
     '其他': '#a4ddd4'
   }
   return colors[type] || '#909399'
@@ -580,6 +727,15 @@ const formatDate = (date: string | Date) => {
               <el-tag :type="getStatusType(task.status)" size="small" effect="dark">
                 {{ getStatusText(task.status) }}
               </el-tag>
+              <el-tag
+                v-if="executionCountdowns[task.taskId]"
+                type="danger"
+                size="small"
+                effect="plain"
+                style="margin-left: 6px;"
+              >
+                {{ formatCountdown(executionCountdowns[task.taskId]) }}
+              </el-tag>
             </div>
           </div>
           
@@ -669,9 +825,20 @@ const formatDate = (date: string | Date) => {
               <span>{{ formatDate(task.createTime) }}</span>
             </div>
             <div class="task-actions">
+              <el-button
+                v-if="isTaskExecuting(task)"
+                type="warning"
+                size="small"
+                @click="terminateTask(task)"
+              >
+                终止任务
+              </el-button>
               <el-button type="primary" size="small" circle @click="handleUpdate(task)">
                 <el-icon><Edit /></el-icon>
               </el-button>
+            <el-button type="info" size="small" circle @click="goToTaskPlanning(task.taskId)">
+              <el-icon><VideoCamera /></el-icon>
+            </el-button>
               <el-button type="danger" size="small" circle @click="handleDelete(task)">
                 <el-icon><Delete /></el-icon>
               </el-button>
@@ -707,6 +874,14 @@ const formatDate = (date: string | Date) => {
       destroy-on-close
     >
       <div class="task-form-scroll-wrapper ultra-compact">
+        <el-alert
+          v-if="taskForm.taskId && taskForm.status === 3"
+          type="info"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px;"
+          title="该任务已完成。保存修改后状态将重置为「待执行」，可重新规划并执行。"
+        />
         <div class="form-section-title compact">
           <el-icon><Document /></el-icon>
           <span>基本信息</span>

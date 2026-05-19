@@ -2,16 +2,37 @@
 通用样式代码
  */
 :root {
+  /* ===== Theme tokens (app) ===== */
   --primary-color: #4d4fc8;
   --secondary-color: #6c63ff;
   --accent-color: #d6c571;
-  --text-color: #333;
-  --light-text: #666;
-  --background-color: #f5f7fa;
-  --card-background: #fff;
-  --border-radius: 8px;
-  --box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-  --transition: all 0.3s ease;
+
+  --text-color: #0f172a;
+  --light-text: rgba(15, 23, 42, 0.68);
+  --muted-text: rgba(15, 23, 42, 0.52);
+
+  --background-color: #f6f8fc;
+  --card-background: #ffffff;
+  --surface-2: rgba(255, 255, 255, 0.7);
+  --border-color: rgba(15, 23, 42, 0.10);
+
+  --border-radius: 12px;
+  --border-radius-sm: 10px;
+  --border-radius-lg: 16px;
+
+  --box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  --box-shadow-hover: 0 14px 40px rgba(15, 23, 42, 0.10);
+  --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ===== Layout tokens ===== */
+  --layout-header-height: 60px;
+  --layout-aside-width: 240px;
+
+  /* ===== Element Plus tokens (partial) ===== */
+  --el-color-primary: var(--primary-color);
+  --el-border-radius-base: 12px;
+  --el-border-radius-small: 10px;
+  --el-box-shadow: var(--box-shadow);
 }
 
 * {
@@ -21,10 +42,24 @@
 }
 
 body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, 'Apple Color Emoji',
+    'Segoe UI Emoji';
   background-color: var(--background-color);
   color: var(--text-color);
   line-height: 1.6;
+}
+
+/* 更柔和的页面背景层次 */
+body::before{
+  content:'';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1200px 800px at 10% 0%, rgba(108, 99, 255, 0.12), transparent 60%),
+    radial-gradient(900px 600px at 80% 10%, rgba(77, 79, 200, 0.10), transparent 55%),
+    radial-gradient(900px 700px at 60% 90%, rgba(214, 197, 113, 0.08), transparent 55%);
+  z-index: -1;
 }
 
 a {
@@ -78,10 +113,11 @@ h1::after {
   padding: 20px;
   margin-bottom: 20px;
   transition: var(--transition);
+  border: 1px solid var(--border-color);
 }
 
 .card:hover {
-  box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.15);
+  box-shadow: var(--box-shadow-hover);
   transform: translateY(-2px);
 }
 
@@ -93,6 +129,51 @@ h1::after {
 .el-button:hover {
   transform: translateY(-1px);
   box-shadow: 0 2px 8px rgba(77, 79, 200, 0.3);
+}
+
+/* Element Plus：卡片/对话框/抽屉统一圆角与边框 */
+:root .el-card,
+:root .el-dialog,
+:root .el-drawer{
+  border-radius: var(--border-radius-lg);
+}
+
+:root .el-card{
+  border: 1px solid var(--border-color);
+  box-shadow: var(--box-shadow);
+}
+
+:root .el-dialog{
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+/* Element Plus：输入类控件更现代（轻边框、聚焦高亮） */
+:root .el-input__wrapper,
+:root .el-select__wrapper,
+:root .el-textarea__inner{
+  border-radius: var(--border-radius-sm);
+}
+
+/* 滚动条（在支持的浏览器） */
+*{
+  scrollbar-width: thin;
+  scrollbar-color: rgba(15, 23, 42, 0.26) transparent;
+}
+
+*::-webkit-scrollbar{
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb{
+  background: rgba(15, 23, 42, 0.18);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover{
+  background: rgba(15, 23, 42, 0.26);
+  background-clip: content-box;
 }
 
 /* 表格样式 */

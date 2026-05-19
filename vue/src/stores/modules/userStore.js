@@ -15,6 +15,10 @@ const useUserStore = defineStore(
         }),
         //方法定义
         actions: {
+            clearAiChatCache(){
+                try{ sessionStorage.removeItem('ai_chat_messages_v1') }catch (e){}
+                try{ localStorage.removeItem('ai_chat_messages_v1') }catch (e){}
+            },
             login(userInfo){
                 //异步操作
                 return new Promise((resolve,reject) => {
@@ -81,6 +85,8 @@ const useUserStore = defineStore(
                         this.avatar = ''
                         //删除令牌
                         removeToken()
+                        //清理 AI 助手会话缓存（退出登录后不保留）
+                        this.clearAiChatCache()
                         //返回结果
                         resolve(res)
                     }).catch(error => {

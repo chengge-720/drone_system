@@ -3,11 +3,11 @@
  */
 
 import type { Ref } from 'vue'
-import { getDistanceFromLatLonInMeters } from './pathCalculator'
+import { getDistanceFromLatLonInMeters, type PathCoord3D } from './pathCalculator'
 
 export const initDistanceChart = (
   chartContainer: HTMLElement | null,
-  flatPathCoords: Array<{ lng: number; lat: number }>,
+  flatPathCoords: PathCoord3D[],
   distanceChartRef: any
 ) => {
   if (!chartContainer || flatPathCoords.length === 0) return
@@ -19,7 +19,9 @@ export const initDistanceChart = (
     for (let i = 1; i < flatPathCoords.length; i++) {
       const prev = flatPathCoords[i - 1]
       const curr = flatPathCoords[i]
-      const dist = getDistanceFromLatLonInMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+      const horiz = getDistanceFromLatLonInMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+      const dv = (curr.alt ?? 0) - (prev.alt ?? 0)
+      const dist = Math.sqrt(horiz * horiz + dv * dv)
       distances.push(distances[i - 1] + dist)
     }
     
@@ -49,15 +51,17 @@ export const initDistanceChart = (
             <div style="font-weight:bold;">点 #${params[0].dataIndex}</div>
             经度：${point.lng.toFixed(6)}<br/>
             纬度：${point.lat.toFixed(6)}<br/>
+            高度：${(point.alt ?? 0).toFixed(1)} m<br/>
             累计距离：${params[0].value.toFixed(1)} m
           `
         }
       },
       xAxis: {
-        type: 'index',
+        type: 'category',
         name: '路径点索引',
         nameLocation: 'middle',
         nameGap: 25,
+        data: distances.map((_, i) => i),
         axisLabel: {
           color: '#666'
         }

@@ -19,6 +19,23 @@
         </div>
         <div class="message-content">
           <div class="message-text">{{ message.content }}</div>
+          <div v-if="message.role === 'ai' && message.confirmAction" class="confirm-actions">
+            <el-button
+              size="small"
+              type="primary"
+              :disabled="loading"
+              @click="submitDraftConfirm(message.confirmToken, 'confirm')"
+            >
+              确认创建任务
+            </el-button>
+            <el-button
+              size="small"
+              :disabled="loading"
+              @click="submitDraftConfirm(message.confirmToken, 'cancel')"
+            >
+              取消
+            </el-button>
+          </div>
           <div class="message-time">{{ message.time }}</div>
         </div>
       </div>
@@ -65,6 +82,17 @@
 import {ref, nextTick, onMounted} from 'vue';
 import { User, ChatDotRound, Promotion } from '@element-plus/icons-vue';
 import { sendMessageToAI } from '@/api/system/ai.js';
+type ChatMessage = {
+  role: 'user' | 'ai'
+  content: string
+  time: string
+  confirmAction?: boolean
+  confirmToken?: string | null
+}
+
+const CHAT_STORAGE_KEY = 'ai_chat_messages_v1'
+const MAX_STORED_MESSAGES = 200
+
 
 // 输入框内容
 const inputMessage = ref('');
@@ -84,13 +112,53 @@ const getCurrentTime = () => {
 };
 
 // 聊天记录
-const messages = ref([
+const messages = ref<ChatMessage[]>([
   {
     role: 'ai',
-    content: '您好！我是 AI 智能助手，有什么可以帮助您的吗？',
+    content:
+      '您好！我是本系统的智能助手，可介绍各菜单功能与使用流程。您也可以用自然语言描述任务，例如「起点：xx 终点：xx」「从xx到xx」或「由xx至xx的货物运送任务」，系统会先做地点校验并生成草稿，确认后再写入「任务信息」列表（创建后需指派无人机）。',
     time: getCurrentTime()
   }
 ]);
+
+const persistMessages = () => {
+  try {
+    const safe = (messages.value || []).slice(-MAX_STORED_MESSAGES).map((m) => ({
+      role: m.role === 'user' ? 'user' : 'ai',
+      content: String(m.content || ''),
+      time: String(m.time || ''),
+      confirmAction: Boolean(m.confirmAction),
+      confirmToken: m.confirmToken ? String(m.confirmToken) : null
+    }))
+    sessionStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(safe))
+  } catch (e) {
+    console.warn('保存聊天记录失败:', e)
+  }
+}
+
+const restoreMessages = () => {
+  try {
+    const raw = sessionStorage.getItem(CHAT_STORAGE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed) || parsed.length === 0) return
+    const restored: ChatMessage[] = parsed
+      .filter((x: any) => x && (x.role === 'user' || x.role === 'ai'))
+      .map((x: any) => ({
+        role: x.role,
+        content: String(x.content || ''),
+        time: String(x.time || ''),
+        confirmAction: Boolean(x.confirmAction),
+        confirmToken: x.confirmToken ? String(x.confirmToken) : null
+      }))
+      .slice(-MAX_STORED_MESSAGES)
+    if (restored.length > 0) {
+      messages.value = restored
+    }
+  } catch (e) {
+    console.warn('恢复聊天记录失败:', e)
+  }
+}
 
 // 滚动到底部
 const scrollToBottom = async () => {
@@ -111,23 +179,41 @@ const sendMessage = async () => {
     content: message,
     time: getCurrentTime()
   });
+  persistMessages()
 
   inputMessage.value = '';
   loading.value = true;
   await scrollToBottom();
 
   try {
-    // 调用 AI 接口
     const response = await sendMessageToAI(message);
-    
-    console.log('AI 响应数据:', response);
-    
-    // 添加 AI 回复
+    const payload = response.data;
+    let content =
+      typeof payload === 'string'
+        ? payload
+        : (payload && typeof payload.reply === 'string' ? payload.reply : null);
+    if (!content) {
+      content = response.msg || '抱歉，回复失败。';
+    }
+    if (payload && Array.isArray(payload.missingFields) && payload.missingFields.length > 0) {
+      content += `\n\n还需要你补充这些信息：${payload.missingFields.join('、')}。`
+    }
+    if (payload && Array.isArray(payload.nextActions) && payload.nextActions.length > 0) {
+      content += `\n\n接下来你可以这样做：${payload.nextActions.join('；')}。`
+    }
+    if (payload && payload.taskCreated) {
+      const tid = payload.taskId != null ? `任务编号 ${payload.taskId}` : '新任务';
+      content += `\n\n（系统已在任务列表自动创建路径规划任务：${tid}，起点「${payload.startLocation || ''}」→ 终点「${payload.endLocation || ''}」，请到「任务信息」指派无人机。）`;
+    }
+    const confirmRequired = Boolean(payload && payload.confirmRequired);
     messages.value.push({
       role: 'ai',
-      content: response.msg || '抱歉，回复失败。',
-      time: getCurrentTime()
+      content,
+      time: getCurrentTime(),
+      confirmAction: confirmRequired,
+      confirmToken: confirmRequired ? payload.confirmToken : null
     });
+    persistMessages()
   } catch (error) {
     console.error('AI 请求失败:', error);
     messages.value.push({
@@ -135,13 +221,56 @@ const sendMessage = async () => {
       content: '抱歉，网络开小差了，请稍后再试。',
       time: getCurrentTime()
     });
+    persistMessages()
   } finally {
     loading.value = false;
     await scrollToBottom();
   }
 };
 
+const submitDraftConfirm = async (confirmToken: string, action: 'confirm' | 'cancel') => {
+  if (!confirmToken || loading.value) return
+  messages.value = messages.value.map((m) =>
+    m.confirmToken === confirmToken ? { ...m, confirmAction: false } : m
+  )
+  persistMessages()
+  loading.value = true
+  try {
+    const response = await sendMessageToAI('', { action, confirmToken })
+    const payload = response.data
+    const content =
+      (payload && typeof payload.reply === 'string' && payload.reply) ||
+      response.msg ||
+      (action === 'confirm' ? '任务已确认处理。' : '已取消。')
+    messages.value.push({
+      role: 'ai',
+      content,
+      time: getCurrentTime(),
+      confirmAction: false,
+      confirmToken: null
+    })
+    persistMessages()
+  } catch (error) {
+    console.error('确认任务失败:', error)
+    messages.value.push({
+      role: 'ai',
+      content: '确认操作失败，请重试。',
+      time: getCurrentTime(),
+      confirmAction: false,
+      confirmToken: null
+    })
+    persistMessages()
+  } finally {
+    loading.value = false
+    await scrollToBottom()
+  }
+}
+
 onMounted(() => {
+  // 迁移清理：旧版本使用 localStorage，这里主动删除，避免跨登录残留历史会话。
+  try { localStorage.removeItem(CHAT_STORAGE_KEY) } catch {}
+  restoreMessages()
+  void scrollToBottom()
 });
 </script>
 
@@ -256,6 +385,12 @@ onMounted(() => {
   font-size: 12px;
   color: #909399;
   padding: 0 4px;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
 }
 
 .typing-indicator {

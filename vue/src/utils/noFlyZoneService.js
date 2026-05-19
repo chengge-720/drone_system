@@ -3,6 +3,67 @@
  * 提供禁飞区数据管理、可视化和路径检测功能
  */
 
+const VECTOR_REGION_STORAGE_KEY = 'uav_vector_regions_v1'
+
+/**
+ * 暂时关闭禁飞区对「驾车路径规划 / 道路巡检规划 / 增强模块禁飞提示」的影响，便于单独验证沿路规划。
+ * 恢复禁飞参与：改为 `false`。
+ */
+export const DISABLE_NOFLY_ON_DRIVING_PLAN = true
+
+const loadNoFlyPolygonsFromStorage = () => {
+  try {
+    const raw = localStorage.getItem(VECTOR_REGION_STORAGE_KEY)
+    if (!raw) return []
+    const arr = JSON.parse(raw)
+    if (!Array.isArray(arr)) return []
+    return arr
+      .filter((x) => x && x.type === 'noFly' && Array.isArray(x.path) && x.path.length >= 3)
+      .map((x) => {
+        const path = x.path
+          .map((p) => (Array.isArray(p) && p.length >= 2 ? [Number(p[0]), Number(p[1])] : null))
+          .filter(Boolean)
+          .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]))
+        if (path.length < 3) return null
+        return {
+          name: String(x.name || '自定义禁飞区'),
+          level: 'high',
+          description: '用户自定义禁飞多边形',
+          path
+        }
+      })
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+const polygonCentroid = (path) => {
+  if (!Array.isArray(path) || path.length === 0) return null
+  let sx = 0
+  let sy = 0
+  for (const p of path) {
+    sx += Number(p[0])
+    sy += Number(p[1])
+  }
+  return { lng: sx / path.length, lat: sy / path.length }
+}
+
+// 射线法：判断点是否在多边形内（lng/lat 平面近似）
+const pointInPolygon = (lng, lat, polygon) => {
+  if (!Array.isArray(polygon) || polygon.length < 3) return false
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i][0], yi = polygon[i][1]
+    const xj = polygon[j][0], yj = polygon[j][1]
+    const intersect =
+      yi > lat !== yj > lat &&
+      lng < ((xj - xi) * (lat - yi)) / (yj - yi + 0.0) + xi
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
 /**
  * 加载禁飞区数据
  * @param {String} apiUrl - 后端 API 地址（可选）
@@ -10,44 +71,19 @@
  */
 export const loadNoFlyZones = async (apiUrl = null) => {
   try {
+    const polygonZones = loadNoFlyPolygonsFromStorage()
     // 如果提供了 API 地址，从后端获取
     if (apiUrl) {
       const response = await fetch(apiUrl)
       const data = await response.json()
-      return data.data || data
+      const zones = data.data || data
+      return Array.isArray(zones) ? [...zones, ...polygonZones] : polygonZones
     }
-    
-    // 否则使用模拟数据
-    return [
-      {
-        name: '机场净空区',
-        center: { lng: 115.95, lat: 28.75 },
-        radius: 5000, // 半径 5 公里
-        level: 'high', // 警告级别：high, medium, low
-        description: '机场周边净空保护区域'
-      },
-      {
-        name: '军事管理区',
-        center: { lng: 115.85, lat: 28.65 },
-        radius: 2000, // 半径 2 公里
-        level: 'high',
-        description: '军事管理区域，禁止飞行'
-      },
-      {
-        name: '政府机关区域',
-        center: { lng: 115.89, lat: 28.68 },
-        radius: 1000, // 半径 1 公里
-        level: 'medium',
-        description: '政府机关办公区域'
-      },
-      {
-        name: '大型活动临时禁飞区',
-        center: { lng: 115.90, lat: 28.70 },
-        radius: 1500,
-        level: 'low',
-        description: '临时性大型活动区域'
-      }
-    ]
+
+    // 无后端地址时：仅使用用户在路径规划里绘制的禁飞多边形（localStorage）。
+    // 不再注入大面积「演示圆形」禁飞区，否则南昌市常见任务路线会一直被判穿区，
+    // 并在删除自定义多边形后仍出现「已自动绕行（本地网格）」等误导提示。
+    return polygonZones
   } catch (error) {
     console.error('加载禁飞区失败:', error)
     return []
@@ -66,39 +102,63 @@ export const drawNoFlyZones = (map, noFlyZones) => {
   const overlays = []
   
   noFlyZones.forEach(zone => {
-    // 创建圆形覆盖物表示禁飞区
-    const circle = new BMap.Circle(
-      new BMap.Point(zone.center.lng, zone.center.lat),
-      zone.radius,
-      {
-        strokeColor: getZoneColor(zone.level),
-        strokeWeight: 2,
-        strokeOpacity: 0.8,
-        fillColor: getZoneColor(zone.level),
-        fillOpacity: 0.2
-      }
-    )
+    const isPolygon = Array.isArray(zone?.path) && zone.path.length >= 3
+    const overlay = isPolygon
+      ? new AMap.Polygon({
+          path: zone.path,
+          strokeColor: getZoneColor(zone.level),
+          strokeWeight: 2,
+          strokeOpacity: 0.9,
+          fillColor: getZoneColor(zone.level),
+          fillOpacity: 0.22,
+          map
+        })
+      : new AMap.Circle({
+          center: [zone.center.lng, zone.center.lat],
+          radius: zone.radius,
+          strokeColor: getZoneColor(zone.level),
+          strokeWeight: 2,
+          strokeOpacity: 0.8,
+          fillColor: getZoneColor(zone.level),
+          fillOpacity: 0.2,
+          map
+        })
     
-    // 添加标签
-    const label = new BMap.Label(zone.name, {
-      position: new BMap.Point(zone.center.lng, zone.center.lat),
-      offset: new BMap.Size(0, 0)
-    })
+    // 标签优先使用 AMap.Text，兼容性不够则退回 Marker 内容
+    let label = null
+    const labelPos = isPolygon
+      ? polygonCentroid(zone.path)
+      : zone.center
+    if (!labelPos || !Number.isFinite(labelPos.lng) || !Number.isFinite(labelPos.lat)) {
+      overlays.push(overlay)
+      return
+    }
+    try {
+      label = new AMap.Text({
+        text: zone.name,
+        position: [labelPos.lng, labelPos.lat],
+        offset: new AMap.Pixel(0, 0),
+        style: {
+          color: getZoneColor(zone.level),
+          fontSize: 14,
+          fontWeight: 'bold',
+          backgroundColor: 'rgba(255, 255, 255, 0.8)',
+          border: '1px solid #ccc',
+          padding: '4px 8px',
+          borderRadius: '4px'
+        },
+        map
+      })
+    } catch {
+      // eslint-disable-next-line no-new
+      label = new AMap.Marker({
+        position: [labelPos.lng, labelPos.lat],
+        map,
+        content: `<div style="color:${getZoneColor(zone.level)};font-size:14px;font-weight:bold;background:rgba(255,255,255,0.8);border:1px solid #ccc;padding:4px 8px;border-radius:4px;white-space:nowrap;">${zone.name}</div>`
+      })
+    }
     
-    label.setStyle({
-      color: getZoneColor(zone.level),
-      fontSize: '14px',
-      fontWeight: 'bold',
-      backgroundColor: 'rgba(255, 255, 255, 0.8)',
-      border: '1px solid #ccc',
-      padding: '4px 8px',
-      borderRadius: '4px'
-    })
-    
-    map.addOverlay(circle)
-    map.addOverlay(label)
-    
-    overlays.push(circle, label)
+    overlays.push(overlay, label)
   })
   
   return overlays
@@ -131,7 +191,7 @@ export const clearNoFlyZoneOverlays = (overlays, map) => {
   if (!overlays || !map) return
   
   overlays.forEach(overlay => {
-    map.removeOverlay(overlay)
+    overlay?.setMap?.(null)
   })
 }
 
@@ -145,18 +205,33 @@ export const checkNoFlyZoneIntersection = (pathPoints, noFlyZones) => {
   if (!pathPoints || !noFlyZones) {
     return { hasViolation: false, violations: [] }
   }
-  
+
   const violations = []
-  
+
   pathPoints.forEach((point, index) => {
-    noFlyZones.forEach(zone => {
+    noFlyZones.forEach((zone) => {
+      const isPolygon = Array.isArray(zone?.path) && zone.path.length >= 3
+      if (isPolygon) {
+        const inside = pointInPolygon(Number(point.lng), Number(point.lat), zone.path)
+        if (inside) {
+          violations.push({
+            pointIndex: index,
+            zoneName: zone.name,
+            distance: '0',
+            level: zone.level || 'high',
+            description: zone.description || '多边形禁飞区'
+          })
+        }
+        return
+      }
+
       const distance = getDistanceFromLatLonInM(
         point.lat,
         point.lng,
         zone.center.lat,
         zone.center.lng
       )
-      
+
       if (distance < zone.radius) {
         violations.push({
           pointIndex: index,
@@ -168,12 +243,12 @@ export const checkNoFlyZoneIntersection = (pathPoints, noFlyZones) => {
       }
     })
   })
-  
+
   // 去重（同一个禁飞区只记录一次）
-  const uniqueViolations = violations.filter((v, i, arr) => 
-    arr.findIndex(x => x.zoneName === v.zoneName) === i
+  const uniqueViolations = violations.filter(
+    (v, i, arr) => arr.findIndex((x) => x.zoneName === v.zoneName) === i
   )
-  
+
   return {
     hasViolation: uniqueViolations.length > 0,
     violations: uniqueViolations,
@@ -257,5 +332,6 @@ export default {
   clearNoFlyZoneOverlays,
   checkNoFlyZoneIntersection,
   getDistanceFromLatLonInM,
-  generateNoFlyWarning
+  generateNoFlyWarning,
+  DISABLE_NOFLY_ON_DRIVING_PLAN
 }

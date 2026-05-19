@@ -5,7 +5,13 @@
 
 import { createDraggableMarkers, clearPathMarkers } from './mapDraggable.js'
 import { fetchWeatherInfo, checkWeatherWarning, getFlightSuitabilityScore } from './weatherService.js'
-import { loadNoFlyZones, drawNoFlyZones, checkNoFlyZoneIntersection, generateNoFlyWarning } from './noFlyZoneService.js'
+import {
+  loadNoFlyZones,
+  drawNoFlyZones,
+  checkNoFlyZoneIntersection,
+  generateNoFlyWarning,
+  DISABLE_NOFLY_ON_DRIVING_PLAN
+} from './noFlyZoneService.js'
 
 /**
  * 路径规划增强管理器类
@@ -20,15 +26,20 @@ export class PathPlanningEnhancedManager {
     this.weatherInfo = null
     this.warnings = []
     
-    // 配置选项
+    // 配置选项（先展开 options，再用显式字段覆盖，避免 ...options 把 getLivePathPoints 盖成 undefined）
     this.config = {
-      weatherApiKey: options.weatherApiKey || null, // 和风天气 API key
-      noFlyZoneApiUrl: options.noFlyZoneApiUrl || null, // 禁飞区 API 地址
-      enableDraggableMarkers: options.enableDraggableMarkers !== false, // 默认启用可拖拽标记
-      autoLoadWeather: options.autoLoadWeather !== false, // 默认自动加载天气
-      autoLoadNoFlyZones: options.autoLoadNoFlyZones !== false, // 默认自动加载禁飞区
-      ...options
+      ...options,
+      weatherApiKey: options.weatherApiKey ?? null,
+      noFlyZoneApiUrl: options.noFlyZoneApiUrl ?? null,
+      enableDraggableMarkers: options.enableDraggableMarkers !== false,
+      autoLoadWeather: options.autoLoadWeather !== false,
+      autoLoadNoFlyZones: options.autoLoadNoFlyZones !== false,
+      /** 可选：返回当前页面上的路径点，禁飞区变更时用于重新检测 */
+      getLivePathPoints: options.getLivePathPoints ?? null
     }
+
+    /** 最近一次天气适宜度评分，用于清除禁飞警告后刷新 UI */
+    this.lastSuitabilityScore = null
     
     // 回调函数
     this.callbacks = {
@@ -36,6 +47,8 @@ export class PathPlanningEnhancedManager {
       onPathUpdated: options.onPathUpdated || null,
       onWarningsChanged: options.onWarningsChanged || null
     }
+
+    this.__onVectorRegionsChanged = null
   }
   
   /**
@@ -48,6 +61,18 @@ export class PathPlanningEnhancedManager {
     this.pathPoints = pathPoints
     
     console.log('🚀 路径规划增强管理器初始化')
+
+    // 监听“自定义矢量区域”变化，自动重载禁飞区并重新检测
+    if (!this.__onVectorRegionsChanged) {
+      this.__onVectorRegionsChanged = async () => {
+        try {
+          await this.loadNoFlyZones()
+        } catch {}
+      }
+      try {
+        window.addEventListener('uav-vector-regions-changed', this.__onVectorRegionsChanged)
+      } catch {}
+    }
     
     // 加载禁飞区
     if (this.config.autoLoadNoFlyZones) {
@@ -104,7 +129,10 @@ export class PathPlanningEnhancedManager {
    */
   async onMarkerDragEnd(index, updatedPoints) {
     console.log('📍 路径点已更新，索引:', index)
-    
+
+    this.pathPoints = Array.isArray(updatedPoints) ? updatedPoints : this.pathPoints
+    this.checkNoFlyZoneViolation()
+
     // 触发自定义回调
     if (this.callbacks.onPathUpdated) {
       this.callbacks.onPathUpdated(updatedPoints)
@@ -117,10 +145,25 @@ export class PathPlanningEnhancedManager {
   async loadNoFlyZones() {
     try {
       this.noFlyZones = await loadNoFlyZones(this.config.noFlyZoneApiUrl)
-      
+
+      if (typeof this.config.getLivePathPoints === 'function') {
+        try {
+          const live = this.config.getLivePathPoints()
+          if (Array.isArray(live) && live.length) this.pathPoints = live
+        } catch {}
+      }
+
+      // 清理旧覆盖物后再绘制
+      if (this.noFlyOverlays.length > 0) {
+        this.noFlyOverlays.forEach(overlay => {
+          overlay?.setMap?.(null)
+        })
+        this.noFlyOverlays = []
+      }
+
       // 绘制禁飞区
       this.noFlyOverlays = drawNoFlyZones(this.map, this.noFlyZones)
-      
+
       // 检测是否穿越禁飞区
       this.checkNoFlyZoneViolation()
       
@@ -155,8 +198,9 @@ export class PathPlanningEnhancedManager {
       const suitabilityScore = getFlightSuitabilityScore(this.weatherInfo)
       
       // 更新警告信息
+      this.lastSuitabilityScore = suitabilityScore
       this.updateWarnings(weatherWarnings, suitabilityScore)
-      
+
       console.log('✅ 天气信息加载完成:', this.weatherInfo)
     } catch (error) {
       console.error('加载天气信息失败:', error)
@@ -168,14 +212,32 @@ export class PathPlanningEnhancedManager {
    */
   checkNoFlyZoneViolation() {
     if (!this.pathPoints || !this.noFlyZones) return
-    
+
+    // 去掉上一次检测留下的禁飞区文案，否则删区后仍会一直显示「穿越禁飞区」
+    this.warnings = (this.warnings || []).filter(
+      (w) => typeof w === 'string' && !w.includes('路径穿越禁飞区')
+    )
+
+    if (DISABLE_NOFLY_ON_DRIVING_PLAN) {
+      if (this.callbacks.onWarningsChanged) {
+        this.callbacks.onWarningsChanged(this.warnings, this.weatherInfo, this.lastSuitabilityScore)
+      }
+      return { hasViolation: false, violations: [] }
+    }
+
     const result = checkNoFlyZoneIntersection(this.pathPoints, this.noFlyZones)
-    
+
     if (result.hasViolation) {
       const noFlyWarning = generateNoFlyWarning(result.violations)
       this.addWarning(noFlyWarning)
+    } else if (this.callbacks.onWarningsChanged) {
+      this.callbacks.onWarningsChanged(
+        this.warnings,
+        this.weatherInfo,
+        this.lastSuitabilityScore
+      )
     }
-    
+
     return result
   }
   
@@ -255,9 +317,17 @@ export class PathPlanningEnhancedManager {
     // 清除禁飞区覆盖物
     if (this.noFlyOverlays.length > 0) {
       this.noFlyOverlays.forEach(overlay => {
-        this.map?.removeOverlay(overlay)
+        overlay?.setMap?.(null)
       })
       this.noFlyOverlays = []
+    }
+
+    // 移除监听
+    if (this.__onVectorRegionsChanged) {
+      try {
+        window.removeEventListener('uav-vector-regions-changed', this.__onVectorRegionsChanged)
+      } catch {}
+      this.__onVectorRegionsChanged = null
     }
     
     // 清空引用

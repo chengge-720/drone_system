@@ -99,12 +99,14 @@ service.interceptors.response.use(
             //直接返回数据
             return res.data
         }
-        //响应数据处理
-        console.log('完整响应:', res)
-        console.log('响应数据:', res.data)
-        console.log('响应状态码:', res.status)
-        console.log('响应头:', res.headers)
-        
+        // 开发环境再打印完整响应，避免控制台被刷屏（生产/日常调试更清爽）
+        if (import.meta.env.DEV) {
+          console.log('完整响应:', res)
+          console.log('响应数据:', res.data)
+          console.log('响应状态码:', res.status)
+          console.log('响应头:', res.headers)
+        }
+
         // 确保code是数字类型
         let code = 200
         let msg = '操作失败'
@@ -115,8 +117,10 @@ service.interceptors.response.use(
             msg = res.data.msg || '操作失败'
         }
         
-        console.log('解析的状态码:', code)
-        console.log('解析的错误信息:', msg)
+        if (import.meta.env.DEV) {
+          console.log('解析的状态码:', code)
+          console.log('解析的错误信息:', msg)
+        }
 
         //根据不同状态码处理
         if(code === 401){
@@ -135,6 +139,11 @@ service.interceptors.response.use(
         //这里处理网络错误
         let {message , response } = error
         console.log('响应错误:', error)
+        try {
+            console.log('请求方法:', error?.config?.method)
+            console.log('请求地址:', error?.config?.baseURL, error?.config?.url)
+            console.log('响应体(data):', response?.data)
+        } catch {}
         console.log('响应状态:', response?.status)
         console.log('错误信息:', message)
         if(response?.status === 401){

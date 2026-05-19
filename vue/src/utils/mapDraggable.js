@@ -20,37 +20,33 @@ export const createDraggableMarkers = (map, pathPoints, onMarkerDragEnd) => {
   
   for (let i = 0; i < pathPoints.length; i += step) {
     const point = pathPoints[i]
-    const marker = new BMap.Marker(new BMap.Point(point.lng, point.lat), {
-      enableDragging: true,
-      raiseOnDrag: true
+    const marker = new AMap.Marker({
+      position: [point.lng, point.lat],
+      draggable: true,
+      raiseOnDrag: true,
+      map
     })
     
-    // 设置标记样式
-    marker.setOffset(new BMap.Size(-5, -5))
-    
-    // 绑定拖拽开始事件
-    marker.addEventListener('dragstart', () => {
+    marker.on('dragstart', () => {
       console.log('🎯 开始拖拽标记', i)
     })
     
-    // 绑定拖拽结束事件
-    marker.addEventListener('dragend', async (e) => {
-      const newPoint = e.target.getPosition()
-      console.log('✅ 标记拖拽完成，新位置:', newPoint.lng, newPoint.lat)
+    marker.on('dragend', async (e) => {
+      const lnglat = e?.lnglat
+      if (!lnglat) return
       
-      // 更新路径点
+      console.log('✅ 标记拖拽完成，新位置:', lnglat.lng, lnglat.lat)
+      
       pathPoints[i] = {
-        lng: newPoint.lng,
-        lat: newPoint.lat
+        lng: lnglat.lng,
+        lat: lnglat.lat
       }
       
-      // 执行回调
       if (onMarkerDragEnd) {
         await onMarkerDragEnd(i, pathPoints)
       }
     })
     
-    map.addOverlay(marker)
     pathMarkers.push(marker)
   }
   
@@ -66,7 +62,7 @@ export const clearPathMarkers = (pathMarkers, map) => {
   if (!pathMarkers || !map) return
   
   pathMarkers.forEach(marker => {
-    map.removeOverlay(marker)
+    marker?.setMap?.(null)
   })
   
   return []
@@ -96,10 +92,8 @@ export const recalculatePathAfterDrag = async (
       const start = pathPoints[0]
       const end = pathPoints[pathPoints.length - 1]
       
-      await calculatePathWithBaiduMap(
-        new BMap.Point(start.lng, start.lat),
-        new BMap.Point(end.lng, end.lat)
-      )
+      // Phase 5 清理：避免直接依赖旧地图 Point 对象，传递为 {lng,lat} 交由上层适配实现
+      await calculatePathWithBaiduMap(start, end)
     } else {
       // 3D 模式：简单重绘路径
       drawPathOnMap()

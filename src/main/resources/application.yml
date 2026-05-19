@@ -5,6 +5,9 @@ drone:
 
 #spring??
 spring:
+  # 本机密钥放 application-local.yml（已 .gitignore），此处 optional 缺失时不影响启动
+  config:
+    import: optional:classpath:application-local.yml
   #???????
   datasource:
     #?????????????
@@ -32,6 +35,8 @@ logging:
     #debug???????warn??????????
     com.drone: debug
     org.springframework: info
+    # 路径规划全链路 JSON 数据包（RL / A* / GA）
+    PATH_PLAN_TRACE: info
 
 # Mabatis??????????????????????
 mybatis:
@@ -60,10 +65,52 @@ pagehelper:
   #shi yong count cha xun huo qu de shu ju zon shu
   params: count=countSql
 
-# Doubao AI Configuration
-# 请在下方配置您的豆包 API Key
-doubao:
-  api:
-    key: 48045617-a77e-495d-998a-770c408a1a3e
-    url: https://ark.cn-beijing.volces.com/api/v3/chat/completions
-    model: ep-20260304201511-km522
+# 大模型（OpenAI 兼容 Chat Completions，Bearer 鉴权）
+#
+# 调用顺序：llm.primary（默认通义千问）→ llm.fallbacks 列表中已配置且密钥/模型非空的项依次重试。
+# 通义千问文档：https://help.aliyun.com/zh/model-studio/compatibility-of-openai-with-dashscope
+# 豆包 Ark 与 primary 相同协议，将 base-url 配为控制台给出的 chat/completions 地址即可。
+#
+# 密钥建议用环境变量（勿提交到 Git），例如：
+#   setx DASHSCOPE_API_KEY "sk-..."
+# 注意：setx 后需「完全重启」IDE/终端，否则 Spring Boot 进程读不到新变量。
+#
+# 若环境变量始终不生效，可二选一（仅本机调试，勿把 sk- 提交到 Git）：
+#   A) 写在 llm.primary.api-key 下；或
+#   B) 使用与旧版一致的扁平项（与 primary 可同时存在，会合并补全）：
+#      llm.api-key / llm.base-url / llm.model
+#
+#   setx ARK_API_KEY "sk-..."  及 setx DOUBAO_MODEL "ep-xxxx"
+llm:
+  temperature: 0.6
+  max-tokens: 900
+  connect-timeout-ms: 15000
+  read-timeout-ms: 120000
+  # 可选扁平兼容（与 primary 二选一或合并；见上文）
+  # api-key: sk-你的DashScopeKey
+  # base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  # model: qwen-flash
+  primary:
+    name: 通义千问
+    api-key: ${DASHSCOPE_API_KEY:${LLM_API_KEY:}}
+    base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    chat-path: /chat/completions
+    model: qwen-flash
+  fallbacks:
+    - name: 豆包Ark
+      api-key: ${ARK_API_KEY:${DOUBAO_API_KEY:}}
+      base-url: https://ark.cn-beijing.volces.com/api/v3/chat/completions
+      # 与控制台「推理接入点」一致；若不同请在 application-local.yml 覆盖 llm.fallbacks[0].model
+      model: ${DOUBAO_MODEL:ep-20260304201511-km522}
+
+# Python Path Planning Service Configuration
+python:
+  path-planning:
+    url: http://localhost:5000
+    enabled: true
+    health-path: /health
+    # Python 项目路径（仓库内 python_service，含 app.py）
+    project-dir: E:/java/drone/python_service
+    # 启动命令（Windows 可用 python 或 python.exe；如需虚拟环境可写绝对路径）
+    command: python app.py
+    startup-timeout-ms: 30000

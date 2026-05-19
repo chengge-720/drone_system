@@ -45,9 +45,10 @@ export function deleteUavByUavIds(uavIds){
 
 //路径规划
 export function planPath(data){
-    return request({
-        url:"/uavInfo/pathPlanning/planPath",
-        method:"post",
-        data: data
-    })
+    // 历史接口：后端已移除 /uavInfo/pathPlanning/planPath
+    // 统一在业务侧改用：
+    // - 2D：AMap.Driving
+    // - 3D/RL：/api/path/plan
+    // - 本地降级：前端网格规划
+    return Promise.reject(new Error('路径规划接口已废弃：/uavInfo/pathPlanning/planPath（请改用 AMap.Driving 或 /api/path/plan）'))
 }

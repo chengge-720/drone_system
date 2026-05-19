@@ -29,6 +29,13 @@ export const deg2rad = (deg: number): number => {
 /**
  * 计算路径统计参数
  */
+/** 含高度的路径坐标（alt 米，缺省按 0） */
+export interface PathCoord3D {
+  lng: number
+  lat: number
+  alt: number
+}
+
 export interface PathStats {
   totalDistance: number
   estimatedTime: number
@@ -38,7 +45,7 @@ export interface PathStats {
   endCoord: string
 }
 
-export const calculatePathStats = (flatPathCoords: Array<{ lng: number; lat: number }>): PathStats => {
+export const calculatePathStats = (flatPathCoords: PathCoord3D[]): PathStats => {
   if (flatPathCoords.length < 2) {
     return {
       totalDistance: 0,
@@ -52,11 +59,15 @@ export const calculatePathStats = (flatPathCoords: Array<{ lng: number; lat: num
   
   let totalDistance = 0
   
-  // 计算总距离
+  // 计算总距离（水平 + 高度变化的三维折线长）
   for (let i = 1; i < flatPathCoords.length; i++) {
     const prev = flatPathCoords[i - 1]
     const curr = flatPathCoords[i]
-    totalDistance += getDistanceFromLatLonInMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+    const horiz = getDistanceFromLatLonInMeters(prev.lat, prev.lng, curr.lat, curr.lng)
+    const za = prev.alt ?? 0
+    const zb = curr.alt ?? 0
+    const dv = zb - za
+    totalDistance += Math.sqrt(horiz * horiz + dv * dv)
   }
   
   const avgSpeed = 10 // 默认 10 m/s
@@ -67,22 +78,27 @@ export const calculatePathStats = (flatPathCoords: Array<{ lng: number; lat: num
     estimatedTime: Math.round(estimatedTime),
     pointCount: flatPathCoords.length,
     avgSpeed: avgSpeed,
-    startCoord: `${flatPathCoords[0].lat.toFixed(6)}, ${flatPathCoords[0].lng.toFixed(6)}`,
-    endCoord: `${flatPathCoords[flatPathCoords.length - 1].lat.toFixed(6)}, ${flatPathCoords[flatPathCoords.length - 1].lng.toFixed(6)}`
+    startCoord: `${flatPathCoords[0].lat.toFixed(6)}, ${flatPathCoords[0].lng.toFixed(6)} · ${(flatPathCoords[0].alt ?? 0).toFixed(0)} m`,
+    endCoord: `${flatPathCoords[flatPathCoords.length - 1].lat.toFixed(6)}, ${flatPathCoords[flatPathCoords.length - 1].lng.toFixed(6)} · ${(flatPathCoords[flatPathCoords.length - 1].alt ?? 0).toFixed(0)} m`
   }
 }
 
 /**
- * 扁平化路径坐标
+ * 扁平化路径坐标（始终带 alt，缺省为 0）
  */
-export const flattenPathCoordinates = (pathPoints: any[]): Array<{ lng: number; lat: number }> => {
-  const coords: Array<{ lng: number; lat: number }> = []
+export const flattenPathCoordinates = (pathPoints: any[]): PathCoord3D[] => {
+  const coords: PathCoord3D[] = []
   
   pathPoints.forEach(point => {
-    coords.push({
-      lng: point.lng || (typeof point.getLongitude === 'function' ? point.getLongitude() : point.lng),
-      lat: point.lat || (typeof point.getLatitude === 'function' ? point.getLatitude() : point.lat)
-    })
+    const lng = Number(
+      point.lng ?? (typeof point.getLongitude === 'function' ? point.getLongitude() : point.lng)
+    )
+    const lat = Number(
+      point.lat ?? (typeof point.getLatitude === 'function' ? point.getLatitude() : point.lat)
+    )
+    const altRaw = point.alt ?? point.height ?? point.elevation
+    const alt = altRaw != null && !Number.isNaN(Number(altRaw)) ? Number(altRaw) : 0
+    coords.push({ lng, lat, alt })
   })
   
   return coords
@@ -100,7 +116,10 @@ export const getAlgorithmColor = (algorithmName: string): string => {
     case '蚁群算法':
       return '#F59E0B' // 橙色
     case '强化学习模型':
+    case '强化学习':
       return '#8B5CF6' // 紫色
+    case '遗传算法':
+      return '#F97316'
     default:
       return '#4D4FC3' // 默认蓝色
   }

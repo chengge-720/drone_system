@@ -5,13 +5,16 @@
     <link rel="icon" href="/favicon.ico">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>基于强化学习的无人机路径规划系统</title>
-    <!-- 百度地图2D API -->
-    <script type="text/javascript"
-            src="http://api.map.baidu.com/api?v=3.0&ak=lADgwetjBOCnODoMSTsU7fTcam57IkBi">
+    <!-- 高德地图 JS API（Phase 0 先保证 2D，可在后续切换 viewMode: '3D'） -->
+    <script type="text/javascript">
+      // JSAPI v2：需要在加载 maps 脚本之前配置安全密钥
+      window._AMapSecurityConfig = {
+        securityJsCode: '3f29f68e38e2170795d204aa4a787782'
+      }
     </script>
-    <!-- 百度地图WebGL API -->
-    <script type="text/javascript"
-            src="http://api.map.baidu.com/api?v=1.0&type=webgl&ak=lADgwetjBOCnODoMSTsU7fTcam57IkBi">
+    <script
+      type="text/javascript"
+      src="https://webapi.amap.com/maps?v=2.0&key=af99849d8654f49468137ae90d625038">
     </script>
     <!-- Three.js -->
     <script type="text/javascript"

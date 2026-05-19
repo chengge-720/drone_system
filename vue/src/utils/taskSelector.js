@@ -5,6 +5,7 @@
 
 import { selectTaskList } from '@/api/system/task'
 import { selectUavList } from '@/api/system/uav'
+import { getDistanceFromLatLonInM } from '@/utils/noFlyZoneService.js'
 
 /**
  * 加载任务列表
@@ -123,9 +124,9 @@ export const recommendUavByPath = (pathPoints, uavList, map) => {
   // 计算路径总距离
   let totalDistance = 0
   for (let i = 0; i < pathPoints.length - 1; i++) {
-    const currentPoint = new BMap.Point(pathPoints[i].lng, pathPoints[i].lat)
-    const nextPoint = new BMap.Point(pathPoints[i + 1].lng, pathPoints[i + 1].lat)
-    totalDistance += map.getDistance(currentPoint, nextPoint)
+    const a = pathPoints[i]
+    const b = pathPoints[i + 1]
+    totalDistance += getDistanceFromLatLonInM(a.lat, a.lng, b.lat, b.lng)
   }
   
   // 转换为公里
