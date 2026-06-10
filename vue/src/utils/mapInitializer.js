@@ -85,21 +85,41 @@ export const replaceBuildingsLayer = (map, opts = {}) => {
 /**
  * 创建 2D 地图实例
  * @param {HTMLElement} container - 地图容器元素
+ * @param {{ center?: [number, number], zoom?: number, satellite?: boolean, lightSatellite?: boolean, mapStyle?: string }} [options]
  * @returns {Object} AMap 地图实例
  */
-export const create2DMap = (container) => {
+export const create2DMap = (container, options = {}) => {
   if (!container || typeof AMap === 'undefined') {
     console.error('❌ 无法创建 2D 地图：容器不存在或 AMap API 未加载')
     return null
   }
   
   try {
-    const map = new AMap.Map(container, {
+    const center = options.center || [MAP_CONFIG.DEFAULT_CENTER.lng, MAP_CONFIG.DEFAULT_CENTER.lat]
+    const zoom = options.zoom || MAP_CONFIG.DEFAULT_ZOOM
+    const useSatellite = Boolean(options.satellite || options.lightSatellite)
+
+    /** @type {Record<string, unknown>} */
+    const mapOptions = {
       viewMode: '2D',
-      center: [MAP_CONFIG.DEFAULT_CENTER.lng, MAP_CONFIG.DEFAULT_CENTER.lat],
-      zoom: MAP_CONFIG.DEFAULT_ZOOM,
+      center,
+      zoom,
       resizeEnable: true
-    })
+    }
+
+    // 与「地图展示」页一致：layers 指定卫星 + 路网，不用默认矢量底图
+    if (useSatellite && typeof AMap.TileLayer?.Satellite === 'function') {
+      const satellite = new AMap.TileLayer.Satellite()
+      const layers = [satellite]
+      if (typeof AMap.TileLayer?.RoadNet === 'function') {
+        layers.push(new AMap.TileLayer.RoadNet())
+      }
+      mapOptions.layers = layers
+    } else {
+      mapOptions.mapStyle = options.mapStyle || 'amap://styles/normal'
+    }
+
+    const map = new AMap.Map(container, mapOptions)
     
     // 基础控件：不同 JSAPI 版本下 Scale 可能不可用/不可 new，做保护避免阻断地图创建
     try {
@@ -111,12 +131,17 @@ export const create2DMap = (container) => {
       console.warn('AMap Scale 控件不可用，已跳过:', e)
     }
     
-    console.log('✅ 2D 地图创建成功')
+    console.log('✅ 2D 地图创建成功', useSatellite ? '（卫星底图）' : '')
     return map
   } catch (error) {
     console.error('❌ 创建 2D 地图失败:', error)
     return null
   }
+}
+
+/** 高德卫星图 + 路网（与地图展示页相同） */
+export const createSatelliteMap = (container, options = {}) => {
+  return create2DMap(container, { ...options, satellite: true })
 }
 
 /**
@@ -244,14 +269,28 @@ export const adjustMapViewport = (map, pathPoints) => {
     return Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180
   })
   if (safe.length === 0) return
-  
-  const startPoint = safe[0]
-  const endPoint = safe[safe.length - 1]
-  
-  const centerLng = (startPoint.lng + endPoint.lng) / 2
-  const centerLat = (startPoint.lat + endPoint.lat) / 2
-  const center = [centerLng, centerLat]
-  
+
+  let minLng = Infinity
+  let maxLng = -Infinity
+  let minLat = Infinity
+  let maxLat = -Infinity
+  for (const p of safe) {
+    minLng = Math.min(minLng, p.lng)
+    maxLng = Math.max(maxLng, p.lng)
+    minLat = Math.min(minLat, p.lat)
+    maxLat = Math.max(maxLat, p.lat)
+  }
+  if (!Number.isFinite(minLng) || !Number.isFinite(minLat)) return
+
+  const center = [(minLng + maxLng) / 2, (minLat + maxLat) / 2]
+
+  try {
+    if (typeof AMap !== 'undefined' && typeof AMap.Bounds === 'function' && typeof map.setBounds === 'function') {
+      map.setBounds(new AMap.Bounds([minLng, minLat], [maxLng, maxLat]), false, [48, 48, 48, 48])
+      return
+    }
+  } catch {}
+
   try {
     map.setZoomAndCenter?.(15, center)
   } catch {
@@ -260,6 +299,28 @@ export const adjustMapViewport = (map, pathPoints) => {
       map.setZoom?.(15)
     } catch {}
   }
+}
+
+/**
+ * 安全适配地图视野（避免 setFitView 在无效坐标时抛出 LngLat(NaN, NaN)）
+ * @param {Object} map
+ * @param {Array} overlays
+ * @param {Array} pathPoints
+ * @param {[number, number, number, number]} [padding]
+ */
+export const safeFitMapView = (map, overlays, pathPoints, padding = [48, 48, 48, 48]) => {
+  if (!map) return
+
+  if (Array.isArray(overlays) && overlays.length && typeof map.setFitView === 'function') {
+    try {
+      map.setFitView(overlays, false, padding)
+      return
+    } catch (e) {
+      console.warn('setFitView 失败，回退 adjustMapViewport:', e)
+    }
+  }
+
+  adjustMapViewport(map, pathPoints)
 }
 
 /**
@@ -380,11 +441,13 @@ export const clearMapOverlays = (map) => {
  */
 export default {
   create2DMap,
+  createSatelliteMap,
   create3DMap,
   replaceBuildingsLayer,
   switchMapMode,
   resetMapView,
   adjustMapViewport,
+  safeFitMapView,
   getGeoPoint,
   createGeoMarker,
   removeOverlayFromMap,

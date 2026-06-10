@@ -24,6 +24,8 @@ const form = ref({
   uavType: null,
   uavMaxFlightTime: null,
   uavMaxLoad: null,
+  uavMaxSpeed: 10,
+  uavRemainingBattery: 100,
   uavBatteryType: null,
   uavBatteryCapacity: null,
   uavManufacturer: null,
@@ -50,6 +52,14 @@ const rules = {
     {required: true, message: '请输入最大载重', trigger: 'blur'},
     {type: 'number', message: '请输入有效数字', trigger: 'blur'}
   ],
+  uavMaxSpeed: [
+    {required: true, message: '请输入最大速度', trigger: 'blur'},
+    {type: 'number', message: '请输入有效数字', trigger: 'blur'}
+  ],
+  uavRemainingBattery: [
+    {required: true, message: '请输入剩余电量', trigger: 'blur'},
+    {type: 'number', message: '请输入有效数字', trigger: 'blur'}
+  ],
   uavBatteryType: [
     {required: true, message: '请输入电池类型', trigger: 'blur'},
   ],
@@ -74,6 +84,8 @@ const handleInsert = ()=>{
     uavType: null,
     uavMaxFlightTime: null,
     uavMaxLoad: null,
+    uavMaxSpeed: 10,
+    uavRemainingBattery: 100,
     uavBatteryType: null,
     uavBatteryCapacity: null,
     uavManufacturer: null,
@@ -249,81 +261,93 @@ onMounted(()=>{
 </script>
 
 <template>
-  <div class="app-container">
-    <h1 class="art-text">无人机基础信息</h1>
-    
-    <!--顶部搜索和按钮-->
-    <div class="card fade-in">
-      <div class="search-container">
-        <el-form :model="query" ref="queryRef" label-width="100px" inline class="search-form">
+  <div class="admin-page">
+    <div class="admin-page__header">
+      <div>
+        <h1 class="admin-page__title">无人机基础信息</h1>
+        <p class="admin-page__subtitle">维护无人机设备档案、性能参数与运行状态</p>
+      </div>
+      <span class="admin-page__header-meta">共 {{ total }} 条记录</span>
+    </div>
+
+    <div class="admin-page__toolbar">
+      <div class="admin-page__search-wrap">
+        <el-form :model="query" ref="queryRef" label-width="88px" inline class="admin-page__search">
           <el-form-item label="无人机编号" prop="uavCode">
-            <el-input v-model="query.uavCode" placeholder="请输入无人机编号" class="search-input"/>
+            <el-input v-model="query.uavCode" placeholder="请输入编号" clearable @keyup.enter="handleQuery" />
           </el-form-item>
           <el-form-item label="无人机型号" prop="uavModel">
-            <el-input v-model="query.uavModel" placeholder="请输入无人机型号" class="search-input"/>
+            <el-input v-model="query.uavModel" placeholder="请输入型号" clearable @keyup.enter="handleQuery" />
           </el-form-item>
           <el-form-item label="状态" prop="uavStatus">
-            <el-select v-model="query.uavStatus" placeholder="请选择状态" clearable style="width: 100px" class="search-select">
+            <el-select v-model="query.uavStatus" placeholder="全部状态" clearable>
               <el-option label="正常" value="1" />
               <el-option label="任务中" value="2" />
               <el-option label="维修中" value="3" />
               <el-option label="停用" value="4" />
             </el-select>
           </el-form-item>
-          <el-form-item>
-            <el-button type="primary" icon="Search" @click="handleQuery" class="search-button">搜索</el-button>
-            <el-button icon="Refresh" @click="resetQuery" class="reset-button">清空</el-button>
-          </el-form-item>
         </el-form>
-        <div class="action-buttons">
-          <el-button type="primary" icon="Plus" @click="handleInsert" class="action-button primary">新增</el-button>
-          <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate" class="action-button success">修改</el-button>
-          <el-button :disabled="multiple" type="danger" icon="Delete" @click="handleDelete" class="action-button danger">批量删除</el-button>
+        <div class="admin-page__search-btns">
+          <el-button type="primary" icon="Search" class="admin-page__search-icon-btn" @click="handleQuery" />
+          <el-button icon="Refresh" class="admin-page__search-icon-btn" @click="resetQuery" />
         </div>
+      </div>
+      <div class="admin-page__actions">
+        <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
+        <el-button :disabled="single" type="success" icon="Edit" @click="handleUpdate">修改</el-button>
+        <el-button :disabled="multiple" type="danger" icon="Delete" @click="handleDelete">批量删除</el-button>
       </div>
     </div>
 
-    <!-- 列表 -->
-    <div class="card fade-in" style="margin-top: 20px;">
-      <el-table :data="uavList" style="width: 100%" border @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="55" align="center"/>
-        <el-table-column prop="uavId" label="无人机ID" width="80" align="center"/>
-        <el-table-column prop="uavCode" label="无人机编号" width="120" align="center"/>
-        <el-table-column prop="uavModel" label="无人机型号" width="120" align="center"/>
-        <el-table-column prop="uavType" label="无人机类型" width="100" align="center"/>
-        <el-table-column prop="uavMaxFlightTime" label="最大续航(分钟)" width="120" align="center"/>
-        <el-table-column prop="uavMaxLoad" label="最大载重(kg)" width="120" align="center"/>
-        <el-table-column prop="uavBatteryType" label="电池类型" width="100" align="center"/>
-        <el-table-column prop="uavBatteryCapacity" label="电池容量(mAh)" width="120" align="center"/>
-        <el-table-column prop="uavManufacturer" label="生产厂商" width="120" align="center"/>
-        <el-table-column prop="uavStatus" label="状态" width="100" align="center">
+    <div class="admin-page__panel">
+      <div class="admin-page__panel-head">
+        <span class="admin-page__panel-title">设备列表</span>
+        <span class="admin-page__panel-meta">当前第 {{ query.pageNum }} 页</span>
+      </div>
+      <el-table :data="uavList" class="admin-table" border @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="48" align="center"/>
+        <el-table-column prop="uavId" label="ID" width="64" align="center"/>
+        <el-table-column prop="uavCode" label="编号" min-width="100" align="center"/>
+        <el-table-column prop="uavModel" label="型号" min-width="100" align="center"/>
+        <el-table-column prop="uavType" label="类型" min-width="88" align="center"/>
+        <el-table-column prop="uavMaxFlightTime" label="续航(min)" min-width="96" align="center"/>
+        <el-table-column prop="uavMaxLoad" label="载重(kg)" min-width="88" align="center"/>
+        <el-table-column prop="uavMaxSpeed" label="最大速度(m/s)" min-width="108" align="center"/>
+        <el-table-column prop="uavRemainingBattery" label="剩余电量(%)" min-width="108" align="center">
           <template #default="scope">
-            <el-tag :type="getStatusType(scope.row.uavStatus)" class="status-tag">
+            {{ scope.row.uavRemainingBattery ?? 100 }}%
+          </template>
+        </el-table-column>
+        <el-table-column prop="uavBatteryType" label="电池类型" min-width="96" align="center"/>
+        <el-table-column prop="uavBatteryCapacity" label="容量(mAh)" min-width="96" align="center"/>
+        <el-table-column prop="uavManufacturer" label="厂商" min-width="120" align="center" show-overflow-tooltip/>
+        <el-table-column prop="uavStatus" label="状态" width="92" align="center">
+          <template #default="scope">
+            <el-tag :type="getStatusType(scope.row.uavStatus)" effect="light">
               {{ getStatusLabel(scope.row.uavStatus) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" align="center" width="150" fixed="right">
+        <el-table-column label="操作" align="center" width="168" class-name="admin-table-ops">
           <template #default="scope">
             <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
             <el-button link type="danger" icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
+      <div class="admin-page__pagination">
+        <pagination
+          :total="total"
+          v-model:page="query.pageNum"
+          v-model:limit="query.pageSize"
+          @pagination="getList"
+        />
+      </div>
     </div>
 
-    <!-- 分页 -->
-    <div class="fade-in" style="margin-top: 20px;">
-      <pagination :total="total"
-                  v-model:page="query.pageNum"
-                  v-model:limit="query.pageSize"
-                  @pagination="getList"
-      />
-    </div>
-
-    <!-- 添加无人机管理框 -->
-    <vxe-modal :title="title" width="600px" v-model="open" showFooter show-maximize resize>
-      <el-form ref="uavRef" :model="form" :rules="rules" label-width="120px">
+    <vxe-modal :title="title" width="600px" v-model="open" showFooter show-maximize resize class-name="admin-modal">
+      <el-form ref="uavRef" :model="form" :rules="rules" label-width="120px" class="admin-form">
         <el-row>
           <el-col :span="12">
             <el-form-item label="无人机编号" prop="uavCode">
@@ -352,6 +376,18 @@ onMounted(()=>{
           <el-col :span="12">
             <el-form-item label="最大载重" prop="uavMaxLoad">
               <el-input-number v-model="form.uavMaxLoad" :min="0" :step="0.1" placeholder="公斤" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="最大速度" prop="uavMaxSpeed">
+              <el-input-number v-model="form.uavMaxSpeed" :min="0.1" :step="0.1" placeholder="m/s" style="width: 100%" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row>
+          <el-col :span="12">
+            <el-form-item label="剩余电量" prop="uavRemainingBattery">
+              <el-input-number v-model="form.uavRemainingBattery" :min="0" :max="100" :step="1" placeholder="%" style="width: 100%" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -395,144 +431,5 @@ onMounted(()=>{
         </div>
       </template>
     </vxe-modal>
-
   </div>
 </template>
-
-<style scoped>
-/* 搜索和按钮容器样式 */
-.search-container {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-
-.search-form {
-  flex: 1;
-  min-width: 300px;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-/* 搜索输入框样式 */
-.search-input {
-  width: 200px;
-  border-radius: 8px;
-  transition: var(--transition);
-}
-
-.search-input:focus {
-  box-shadow: 0 0 0 2px rgba(77, 79, 200, 0.2);
-}
-
-/* 搜索选择框样式 */
-.search-select {
-  border-radius: 8px;
-  transition: var(--transition);
-}
-
-.search-select:focus {
-  box-shadow: 0 0 0 2px rgba(77, 79, 200, 0.2);
-}
-
-/* 搜索按钮样式 */
-.search-button {
-  border-radius: 8px;
-  font-weight: 500;
-  transition: var(--transition);
-}
-
-.search-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
-}
-
-/* 重置按钮样式 */
-.reset-button {
-  border-radius: 8px;
-  transition: var(--transition);
-}
-
-.reset-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-/* 操作按钮样式 */
-.action-button {
-  border-radius: 8px;
-  font-weight: 500;
-  transition: var(--transition);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.action-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.action-button.primary:hover {
-  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
-}
-
-.action-button.success:hover {
-  box-shadow: 0 4px 12px rgba(102, 187, 106, 0.3);
-}
-
-.action-button.danger:hover {
-  box-shadow: 0 4px 12px rgba(244, 67, 54, 0.3);
-}
-
-/* 状态标签样式 */
-.status-tag {
-  font-size: 12px;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-weight: 500;
-}
-
-/* 动画延迟效果 */
-.fade-in {
-  animation: fadeIn 0.5s ease-in-out;
-}
-
-.fade-in:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.fade-in:nth-child(3) {
-  animation-delay: 0.2s;
-}
-
-.fade-in:nth-child(4) {
-  animation-delay: 0.3s;
-}
-
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .search-container {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .search-form {
-    width: 100%;
-  }
-  
-  .search-input {
-    width: 100%;
-  }
-  
-  .action-buttons {
-    justify-content: center;
-  }
-}
-</style>

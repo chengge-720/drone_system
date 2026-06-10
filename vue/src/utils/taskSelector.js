@@ -133,22 +133,22 @@ export const recommendUavByPath = (pathPoints, uavList, map) => {
   const distanceKm = totalDistance / 1000
   
   console.log(`📏 路径总距离：${distanceKm.toFixed(2)} km`)
-  
-  // 安全系数：预留 30% 的余量
-  const safetyFactor = 1.3
+
+  const safetyFactor = 1.1
   const requiredRange = distanceKm * safetyFactor
-  
-  console.log(`⚠️ 考虑安全系数后所需航程：${requiredRange.toFixed(2)} km`)
+  console.log(`⚠️ 考虑110%安全余量后所需航程：${requiredRange.toFixed(2)} km`)
   
   // 查找满足条件的无人机
   const suitableUavs = uavList.filter(uav => {
     if (!uav.uavMaxFlightTime) return false
-    
-    // 假设无人机速度为 10m/s（36km/h）
-    const assumedSpeed = 10 // m/s
-    const maxRange = (uav.uavMaxFlightTime * 60 * assumedSpeed) / 1000 // 转换为 km
-    
-    return maxRange >= requiredRange
+
+    const speed = Number(uav.uavMaxSpeed) || 10 // m/s
+    const maxRangeKm = (uav.uavMaxFlightTime * 60 * speed) / 1000
+    const batteryPercent = Number(uav.uavRemainingBattery ?? 100)
+    const remainingRangeKm = maxRangeKm * batteryPercent / 100
+
+    // 剩余电量航程需覆盖任务距离的110%
+    return remainingRangeKm >= requiredRange
   })
   
   if (suitableUavs.length === 0) {
@@ -156,12 +156,14 @@ export const recommendUavByPath = (pathPoints, uavList, map) => {
     return null
   }
   
-  // 选择续航时间最长的无人机
+  // 优先选择剩余电量最高的无人机
   const bestUav = suitableUavs.reduce((best, current) => {
-    return current.uavMaxFlightTime > best.uavMaxFlightTime ? current : best
+    const bestBattery = Number(best.uavRemainingBattery ?? 100)
+    const currentBattery = Number(current.uavRemainingBattery ?? 100)
+    return currentBattery > bestBattery ? current : best
   })
   
-  console.log(`✅ 推荐无人机：${bestUav.uavModel} (续航${bestUav.uavMaxFlightTime}分钟)`);
+  console.log(`✅ 推荐无人机：${bestUav.uavModel} (剩余电量${bestUav.uavRemainingBattery ?? 100}%)`);
   
   return bestUav
 }

@@ -7,6 +7,7 @@ import type { Ref } from 'vue'
 export interface AnimationConfig {
   duration: number
   flowSpeed: number
+  loop?: boolean
 }
 
 export class PathAnimationManager {
@@ -27,7 +28,7 @@ export class PathAnimationManager {
     pathPolyline: any,
     flowAnimationRef: Ref<number | null>,
     animationId: Ref<number | null>,
-    config: AnimationConfig = { duration: 3000, flowSpeed: 1 }
+    config: AnimationConfig = { duration: 3000, flowSpeed: 1, loop: false }
   ) {
     this.map = map
     this.flatPathCoords = flatPathCoords
@@ -55,27 +56,30 @@ export class PathAnimationManager {
     
     let offset = 0
     // 降低 setOptions 更新频率，避免 AMap/Canvas 在高频重绘下触发 getImageData 警告刷屏
-    const FRAME_MS = 250 // ~4fps
+    const FRAME_MS = 120
     let lastUpdate = 0
-    const startTime = Date.now()
+    let segmentStart = Date.now()
 
     const animate = (now?: number) => {
       if (!this.flowRunning) return
       const t = typeof now === 'number' ? now : Date.now()
 
-      // 到时自动停止流光，避免动画结束后仍持续触发 canvas 重绘
-      if (t - startTime >= this.config.duration) {
-        this.flowAnimationRef.value = null
-        this.flowRunning = false
-        return
+      if (t - segmentStart >= this.config.duration) {
+        if (this.config.loop) {
+          segmentStart = t
+          offset = 0
+        } else {
+          this.flowAnimationRef.value = null
+          this.flowRunning = false
+          return
+        }
       }
 
       if (t - lastUpdate >= FRAME_MS) {
         lastUpdate = t
-        offset = (offset + 1) % 100
-        // AMap 虚线动态更新：strokeDasharray 为 number[]
+        offset = (offset + 2) % 100
         this.pathPolyline.setOptions?.({
-          strokeDasharray: [offset * 10, 100 - offset * 10]
+          strokeDasharray: [offset * 8, 120 - offset * 8]
         })
       }
       this.flowAnimationRef.value = requestAnimationFrame(animate)
@@ -95,9 +99,9 @@ export class PathAnimationManager {
 
     // 用 inline SVG content 避免 data:image/svg+xml base64 在某些浏览器/JSAPI 下无法加载导致“破图占位”
     const svg = `
-      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#4D4FC3" stroke-width="2">
-        <circle cx="12" cy="12" r="8"></circle>
-        <path d="M12 4V12M12 20V14M4 12h16"></path>
+      <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9" fill="rgba(37,99,235,0.15)" stroke="#2563eb" stroke-width="1.5"/>
+        <path d="M12 5v14M5 12h14" stroke="#2563eb" stroke-width="1.5" stroke-linecap="round"/>
       </svg>
     `
     const content = `
@@ -133,34 +137,31 @@ export class PathAnimationManager {
     this.animationId.value = null
     this.interpolationRunning = true
     
-    const startTime = Date.now()
-    const totalPoints = this.flatPathCoords.length
+    let segmentStart = Date.now()
     
     const interpolate = () => {
       if (!this.interpolationRunning) return
-      const elapsed = Date.now() - startTime
-      const progress = Math.min(elapsed / this.config.duration, 1)
+      const elapsed = Date.now() - segmentStart
+      let progress = Math.min(elapsed / this.config.duration, 1)
       
-      // 计算当前应该到达的点索引
+      const totalPoints = this.flatPathCoords.length
       const currentIndex = Math.floor(progress * (totalPoints - 1))
       const nextIndex = Math.min(currentIndex + 1, totalPoints - 1)
       
-      // 线性插值
       const currentPoint = this.flatPathCoords[currentIndex]
       const nextPoint = this.flatPathCoords[nextIndex]
       
-      const segmentProgress = (progress * (totalPoints - 1)) - currentIndex
+      const segmentProgress = progress * (totalPoints - 1) - currentIndex
       const lng = currentPoint.lng + (nextPoint.lng - currentPoint.lng) * segmentProgress
       const lat = currentPoint.lat + (nextPoint.lat - currentPoint.lat) * segmentProgress
       
-      // 更新无人机位置
       this.uavIconMarker?.setPosition?.([lng, lat])
-      
-      // 计算并更新旋转角度
       this.updateUavRotation(currentPoint, nextPoint)
       
-      // 继续动画
       if (progress < 1) {
+        this.animationId.value = requestAnimationFrame(interpolate)
+      } else if (this.config.loop) {
+        segmentStart = Date.now()
         this.animationId.value = requestAnimationFrame(interpolate)
       } else {
         this.interpolationRunning = false

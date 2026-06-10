@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
   MapLocation, RefreshRight, Delete, Document, Location,
-  Clock, Loading, VideoCamera, TrendCharts, MagicStick,
+  TrendCharts, MagicStick,
   Position, Check,
 } from '@element-plus/icons-vue'
 
@@ -14,7 +14,6 @@ import {
   flattenPathCoordinates,
   getDistanceFromLatLonInMeters,
   type CompareResults,
-  type PathCoord3D
 } from '@/utils/pathCalculator'
 import { enrichPathWithAltitude, normalizePathPoint } from '@/utils/pathAltitude'
 import {
@@ -26,7 +25,6 @@ import {
   planPathGeneticGridAvoidPolygons
 } from '@/utils/basicPathPlanner'
 import { PathAnimationManager } from '@/utils/pathAnimation'
-import { initDistanceChart } from '@/utils/chartInit'
 import {
   create2DMap,
   create3DMap,
@@ -48,22 +46,22 @@ import {
   selectTask as apiSelectTask,
   recommendUavByPath as apiRecommendUav
 } from '@/utils/taskSelector'
-import { planPath as apiPlanRlPath, generateUavEnvironmentPlot, exportExternalPath, logFinalPathPackage } from '@/api/system/pathPlanning'
-import { getMissionTrainAnchor, warpOfflineRlPathToUserAnchors } from '@/utils/offlineRlPathWarp'
-import { planRoadInspectionRoute, planWaterInspectionRoute } from '@/utils/taskPathPlanner'
+import { planPath as apiPlanRlPath, planGridPath, generateUavEnvironmentPlot, exportExternalPath, regenerateRlPlots, logFinalPathPackage } from '@/api/system/pathPlanning'
+import { decodeRlApiPathToGcj02 } from '@/utils/rlGridGeo'
+import { getMissionTrainAnchor, unwarpUserPathToTrainAnchors } from '@/utils/offlineRlPathWarp'
 import {
-  planPathGeneticAlongPolyline,
-  subsamplePolylineForSegments,
-  slicePolylineBetween
-} from '@/utils/networkCorridorPlanner'
+  resolvePythonMissionId,
+  isMissionGeoMatch,
+  getMissionGeoDistance,
+  MISSION_GEO_MAX_DISTANCE_M
+} from '@/utils/missionRlResolver'
+import { planRoadInspectionRoute, planWaterInspectionRoute } from '@/utils/taskPathPlanner'
+import { planPathGeneticAlongPolyline } from '@/utils/networkCorridorPlanner'
 import { drawComparePathLine, clearComparePathLine, getAlgorithmColor } from '@/utils/pathStyleManager'
 import { fetchBaiduBuildingPoiObstacles } from '@/utils/baiduBuildingObstacles'
 import { filterBuildingsInCorridor } from '@/utils/corridorBuildings'
 import { loadNoFlyZones, checkNoFlyZoneIntersection, DISABLE_NOFLY_ON_DRIVING_PLAN } from '@/utils/noFlyZoneService'
 import { convertPathWgs84ToGcj02, gcj02ToWgs84 } from '@/utils/coordTransform'
-import {
-  disposeChart
-} from '@/utils/comparisonCharts'
 import '@/assets/styles/pathPlanning.css'
 
 const router = useRouter()
@@ -117,6 +115,10 @@ const pathPoints = ref<Array<{ lng: number; lat: number; alt: number }>>([])
 /** 强化学习返回的环境障碍物（网格），用于右侧三维仿真线框楼体 */
 const planObstacles = ref<any[]>([])
 const cruiseAltitudeM = ref(88)
+/** 与 Python/Java OFFLINE_GRID_N=54、z_scale=2.0 对齐；更高时后端自动放大 z_scale */
+const RL_GRID_N = 54
+const RL_Z_SCALE_M = 2
+const rlMaxCruiseAtNativeScaleM = (RL_GRID_N - 1) * RL_Z_SCALE_M
 /** 暂时关闭可拖拽路径锚点（避免路径点扎堆） */
 const ENABLE_DRAGGABLE_PATH_MARKERS = false
 
@@ -194,7 +196,6 @@ const flowAnimationRef = ref<number | null | { stop: () => void }>(null)
 /** 2D/3D 动画帧 ID（用于清除路径时统一取消） */
 const animationIdRef = ref<number | null>(null)
 const uavIconMarker = ref(null)
-const flatPathCoords = ref<PathCoord3D[]>([])
 let animationManager: PathAnimationManager | null = null
 
 const showPathInfo = ref(false)
@@ -206,8 +207,6 @@ const pathStats = ref({
   startCoord: '',
   endCoord: ''
 })
-const chartContainer = ref(null)
-let distanceChart = null
 
 
 const persistRouteData = (payload: any) => {
@@ -273,7 +272,10 @@ const runUavEnvPlot = (start: any, end: any) => {
       })
       if (resp?.code === 200) {
         try {
-          window.dispatchEvent(new CustomEvent('uav-reload-rl-plots', { detail: { t: Date.now() } }))
+          const mid = resolveMissionIdForRl()
+          window.dispatchEvent(
+            new CustomEvent('uav-reload-rl-plots', { detail: { missionId: mid > 0 ? mid : undefined, t: Date.now() } })
+          )
         } catch {}
       }
     } catch (err) {
@@ -287,8 +289,15 @@ const saveCurrentToRouteInfo = (extra?: Record<string, any>) => {
   const missionId = resolveMissionIdForRl()
   const payload = {
     uavModel: uav?.uavModel || uav?.uavName || '未知无人机',
+    uavMaxFlightTime: Number(uav?.uavMaxFlightTime) || undefined,
+    cruiseAltitudeM: Number(cruiseAltitudeM.value) || undefined,
+    startPoint: startPoint.value || '',
+    endPoint: endPoint.value || '',
+    savedAt: Date.now(),
     missionId: missionId > 0 ? missionId : undefined,
-    taskId: missionId > 0 ? missionId : undefined,
+    pyMissionId: missionId > 0 ? missionId : undefined,
+    rlTaskKey: extra?.rlTaskKey || extra?.rlMeta?.taskKey || undefined,
+    businessTaskId: selectedTask.value?.taskId,
     algorithm: tripleAlgoResults.value?.[0]?.algorithm || '三算法对比',
     pathType: selectedPathType.value,
     coordinateSystem: 'GCJ02',
@@ -306,22 +315,115 @@ const saveCurrentToRouteInfo = (extra?: Record<string, any>) => {
   persistRouteData(payload)
 }
 
-const exportPathForOfflineTrain = async (algorithmLabel: string, pts: Array<{ lng: number; lat: number; alt: number }>) => {
-  try {
-    const missionId = resolveMissionIdForRl()
-    const algorithm = algorithmLabel === '遗传算法' ? 'GA' : 'ASTAR'
-    const path = (pts || []).map((p) => {
+const exportPathForOfflineTrain = async (
+  algorithmLabel: string,
+  pts: Array<{ lng: number; lat: number; alt: number }>,
+  opts?: { taskKey?: string; pathWgs?: Array<{ lng: number; lat: number; alt?: number }> }
+) => {
+  const missionId = resolveMissionIdForRl()
+  const taskKey = opts?.taskKey || ''
+  const algorithm = algorithmLabel === '遗传算法' ? 'GA' : 'ASTAR'
+  let exportPts = opts?.pathWgs?.length
+    ? opts.pathWgs.map((p) => ({
+        lng: Number(p.lng),
+        lat: Number(p.lat),
+        alt: Number(p.alt ?? 0)
+      }))
+    : pts || []
+  const trainAnchor = !taskKey && missionId > 0 ? getMissionTrainAnchor(missionId) : null
+  const userStart = missionAnchorStart.value
+  const userEnd = missionAnchorEnd.value
+  if (!opts?.pathWgs?.length && trainAnchor && userStart && userEnd && exportPts.length >= 2) {
+    const userStartWgs = gcj02ToWgs84({ lng: Number(userStart.lng), lat: Number(userStart.lat) })
+    const userGoalWgs = gcj02ToWgs84({ lng: Number(userEnd.lng), lat: Number(userEnd.lat) })
+    const mapWgs = exportPts.map((p) => {
       const wgs = gcj02ToWgs84({ lng: Number(p.lng), lat: Number(p.lat) })
-      return [Number(wgs.lat), Number(wgs.lng), Number(p.alt ?? 0)]
+      return { lat: Number(wgs.lat), lng: Number(wgs.lng), alt: Number(p.alt ?? 0) }
     })
-    if (!path.length) return
-    await exportExternalPath({
-      algorithm,
-      missionId: Number.isFinite(missionId) && missionId > 0 ? missionId : undefined,
-      path
+    exportPts = unwarpUserPathToTrainAnchors(
+      mapWgs,
+      trainAnchor.start,
+      trainAnchor.goal,
+      { lat: userStartWgs.lat, lng: userStartWgs.lng, alt: Number(exportPts[0]?.alt ?? 0) },
+      { lat: userGoalWgs.lat, lng: userGoalWgs.lng, alt: Number(exportPts[exportPts.length - 1]?.alt ?? 0) }
+    ).map((p) => ({ lng: p.lng, lat: p.lat, alt: Number(p.alt ?? 0) }))
+  } else if (!opts?.pathWgs?.length && taskKey && exportPts.length) {
+    exportPts = exportPts.map((p) => {
+      const wgs = gcj02ToWgs84({ lng: Number(p.lng), lat: Number(p.lat) })
+      return { lng: Number(wgs.lng), lat: Number(wgs.lat), alt: Number(p.alt ?? 0) }
     })
+  }
+  const path = exportPts.map((p) => [Number(p.lat), Number(p.lng), Number(p.alt ?? 0)])
+  if (!path.length) return
+  const cruiseAlt = Number(cruiseAltitudeM.value || 0) || 100
+  const startWgs = userStart ? gcj02ToWgs84({ lng: Number(userStart.lng), lat: Number(userStart.lat) }) : null
+  const endWgs = userEnd ? gcj02ToWgs84({ lng: Number(userEnd.lng), lat: Number(userEnd.lat) }) : null
+  await exportExternalPath({
+    algorithm,
+    missionId: !taskKey && Number.isFinite(missionId) && missionId > 0 ? missionId : undefined,
+    taskKey: taskKey || undefined,
+    startPoint: taskKey && startWgs ? [startWgs.lat, startWgs.lng, cruiseAlt] : undefined,
+    endPoint: taskKey && endWgs ? [endWgs.lat, endWgs.lng, cruiseAlt] : undefined,
+    path
+  })
+}
+
+/** 避免每次三算法对比都触发 Python offline_train --plot-only（会重建栅格、耗时长） */
+const REGENERATE_RL_PLOTS_DEBOUNCE_MS = 120_000
+let regenerateRlPlotsTimer: ReturnType<typeof setTimeout> | null = null
+let lastRegenerateRlPlotsAt = 0
+
+const syncExternalPathsForPlots = (results: typeof tripleAlgoResults.value) => {
+  const mid = resolveMissionIdForRl()
+  if (mid <= 0 || !results?.length) return
+
+  const hasAstarOrGa = results.some(
+    (item) => item.algorithm === 'A*算法' || item.algorithm === '遗传算法'
+  )
+  if (!hasAstarOrGa) return
+
+  if (regenerateRlPlotsTimer) clearTimeout(regenerateRlPlotsTimer)
+  regenerateRlPlotsTimer = setTimeout(() => {
+    regenerateRlPlotsTimer = null
+    void runSyncExternalPathsForPlots(results, mid)
+  }, 2500)
+}
+
+const runSyncExternalPathsForPlots = async (
+  results: typeof tripleAlgoResults.value,
+  mid: number
+) => {
+  const now = Date.now()
+  if (now - lastRegenerateRlPlotsAt < REGENERATE_RL_PLOTS_DEBOUNCE_MS) {
+    console.info(
+      `[plots] 跳过 regenerate-rl-plots（${Math.round((REGENERATE_RL_PLOTS_DEBOUNCE_MS - (now - lastRegenerateRlPlotsAt)) / 1000)}s 内已触发过）`
+    )
+    return
+  }
+
+  const exports: Promise<void>[] = []
+  for (const item of results) {
+    if (item.algorithm === 'A*算法') {
+      exports.push(exportPathForOfflineTrain('A*算法', item.pathPoints || [], { pathWgs: item.pathPointsWgs }))
+    } else if (item.algorithm === '遗传算法') {
+      exports.push(exportPathForOfflineTrain('遗传算法', item.pathPoints || [], { pathWgs: item.pathPointsWgs }))
+    }
+  }
+  if (!exports.length) return
+
+  try {
+    await Promise.all(exports)
+    lastRegenerateRlPlotsAt = Date.now()
+    const resp = await regenerateRlPlots({ missionId: mid })
+    if (resp?.code === 200) {
+      try {
+        window.dispatchEvent(new CustomEvent('uav-reload-rl-plots', { detail: { missionId: mid, t: Date.now() } }))
+      } catch {}
+    } else {
+      console.warn('重新生成三算法对比图失败:', resp?.msg || resp)
+    }
   } catch (e) {
-    console.warn('导出外部算法路径失败:', e)
+    console.warn('同步 Java A*/GA 路径到 Python 对比图失败:', e)
   }
 }
 
@@ -331,112 +433,26 @@ const showTaskDialog = ref(false)
 const missionAnchorStart = ref<{ lat: number; lng: number } | null>(null)
 const missionAnchorEnd = ref<{ lat: number; lng: number } | null>(null)
 
-/**
- * Python 训练任务的 mission_id 映射规则。
- * 对应 python_service/offline_train.py 的默认任务定义，不等同于业务 taskId。
- */
-const PY_MISSION_RULES: Array<{
-  missionId: number
-  keywords: string[]
-  startAliases: string[]
-  endAliases: string[]
-}> = [
-  { missionId: 1, keywords: ['南昌舰', '八一大桥'], startAliases: ['南昌舰', '主题公园'], endAliases: ['八一', '八一大桥', '大桥'] },
-  { missionId: 2, keywords: ['秋水广场', '地铁大厦'], startAliases: ['秋水广场', '秋水'], endAliases: ['地铁大厦', '地铁', '大厦'] },
-  { missionId: 3, keywords: ['南昌大学', '第一医院'], startAliases: ['南昌大学', '大学'], endAliases: ['第一医院', '医院', '第一'] },
-  { missionId: 4, keywords: ['南昌航空大学', '人民政府'], startAliases: ['南昌航空大学', '航空大学', '南航'], endAliases: ['人民政府', '市政府', '政府'] }
-]
+/** 解析 Python offline mission；有地图锚点时须通过地理校验，避免误用 Mission 1 Q 表 */
+const resolveMissionIdForRl = () =>
+  resolvePythonMissionId({
+    task: selectedTask.value,
+    startPointText: startPoint.value,
+    endPointText: endPoint.value,
+    startGeo: missionAnchorStart.value,
+    endGeo: missionAnchorEnd.value,
+    extraTasks: taskList.value
+  })
 
-const collectPlaceTexts = (task?: any) => {
-  const t = task || selectedTask.value
-  const startFields = [(t as any)?.startLocation, startPoint.value].map(normalizePlaceText).filter(Boolean)
-  const endFields = [(t as any)?.endLocation, endPoint.value].map(normalizePlaceText).filter(Boolean)
-  const nameField = normalizePlaceText((t as any)?.taskName)
-  const allText = [...startFields, ...endFields, nameField].filter(Boolean).join('|')
-  return { startFields, endFields, allText }
-}
-const PY_MISSION_GEO = [
-  { missionId: 1, start: { lat: 28.717861, lng: 115.865875 }, end: { lat: 28.692707, lng: 115.882176 } },
-  { missionId: 2, start: { lat: 28.684521, lng: 115.858910 }, end: { lat: 28.681276, lng: 115.861983 } },
-  { missionId: 3, start: { lat: 28.664729, lng: 115.918957 }, end: { lat: 28.675901, lng: 115.899369 } },
-  { missionId: 4, start: { lat: 28.683899, lng: 115.853558 }, end: { lat: 28.683186, lng: 115.857866 } }
-]
-
-const normalizePlaceText = (v: any) =>
-  String(v || '')
-    .trim()
-    .replace(/\s+/g, '')
-    .replace(/[-—–_>＞→]/g, '')
-    .replace(/[，,。.;；:：、]/g, '')
-    .replace(/南昌市/g, '')
-    .toLowerCase()
-
-const resolvePythonMissionIdByText = (task?: any) => {
-  const { startFields, endFields, allText } = collectPlaceTexts(task)
-  if (!allText) return 0
-
-  // 秋水广场→地铁大厦：与 mission 4 地理锚点极近，文本命中时强制 mission 2
-  if (allText.includes('秋水') && (allText.includes('地铁大厦') || allText.includes('地铁'))) {
-    return 2
-  }
-
-  for (const rule of PY_MISSION_RULES) {
-    const kws = rule.keywords.map(normalizePlaceText)
-    if (kws.every((kw) => allText.includes(kw))) return rule.missionId
-  }
-
-  for (const rule of PY_MISSION_RULES) {
-    const startAliases = rule.startAliases.map(normalizePlaceText)
-    const endAliases = rule.endAliases.map(normalizePlaceText)
-    const startHit = startFields.some((s) => startAliases.some((a) => s.includes(a)))
-    const endHit = endFields.some((e) => endAliases.some((a) => e.includes(a)))
-    if (startHit && endHit) return rule.missionId
-  }
-  return 0
-}
-
-const resolvePythonMissionIdByGeo = (
-  start?: { lat: number; lng: number } | null,
-  end?: { lat: number; lng: number } | null
+const buildRlTaskKey = (
+  start: { lat: number; lng: number },
+  end: { lat: number; lng: number },
+  businessTaskId?: string | number | null
 ) => {
-  if (!start || !end) return 0
-  const ranked = PY_MISSION_GEO.map((m) => {
-    const dForward =
-      getDistanceFromLatLonInMeters(start.lat, start.lng, m.start.lat, m.start.lng) +
-      getDistanceFromLatLonInMeters(end.lat, end.lng, m.end.lat, m.end.lng)
-    const dReverse =
-      getDistanceFromLatLonInMeters(start.lat, start.lng, m.end.lat, m.end.lng) +
-      getDistanceFromLatLonInMeters(end.lat, end.lng, m.start.lat, m.start.lng)
-    return { id: m.missionId, score: Math.min(dForward, dReverse) }
-  }).sort((a, b) => a.score - b.score)
-
-  const best = ranked[0]
-  if (!best || best.score > 5000) return 0
-
-  const second = ranked[1]
-  const { allText } = collectPlaceTexts()
-  // mission 2/4 锚点相距很近，地理相近时优先文本线索
-  if (best.id === 4 && second?.id === 2 && second.score - best.score < 1500) {
-    if (allText.includes('秋水') || allText.includes('地铁')) return 2
+  if (businessTaskId != null && String(businessTaskId).trim()) {
+    return String(businessTaskId).replace(/[^\w\-]/g, '_').slice(0, 48)
   }
-  if (best.id === 2 && second?.id === 4 && second.score - best.score < 1500) {
-    if (allText.includes('航空') || allText.includes('南航') || allText.includes('人民政府')) return 4
-  }
-  return best.id
-}
-
-const resolveMissionIdForRl = () => {
-  const byText = resolvePythonMissionIdByText()
-  if (byText > 0) return byText
-
-  const byGeo = resolvePythonMissionIdByGeo(missionAnchorStart.value, missionAnchorEnd.value)
-  if (byGeo > 0) return byGeo
-
-  for (const t of taskList.value || []) {
-    const mid = resolvePythonMissionIdByText(t)
-    if (mid > 0) return mid
-  }
-  return 0
+  return `${Number(start.lat).toFixed(5)}_${Number(start.lng).toFixed(5)}_${Number(end.lat).toFixed(5)}_${Number(end.lng).toFixed(5)}`
 }
 
 const startMarker = ref(null)
@@ -586,7 +602,8 @@ const buildAlgoResult = (
   rawPath: Array<{ lng: number; lat: number; alt?: number }>,
   algorithmName: string,
   computationTime: number,
-  note = ''
+  note = '',
+  pathPointsWgs?: Array<{ lng: number; lat: number; alt?: number }>
 ) => {
   const geo = normalizeGeoPathPoints(rawPath)
   const enriched = enrichPathWithAltitude(geo, { cruiseAlt: cruiseAltitudeM.value })
@@ -594,6 +611,7 @@ const buildAlgoResult = (
   return {
     algorithm: algorithmName,
     pathPoints: enriched,
+    pathPointsWgs: pathPointsWgs?.length ? pathPointsWgs : undefined,
     totalDistance: stats.totalDistance,
     estimatedTime: Math.max(1, Math.round(stats.estimatedTime)),
     pointCount: enriched.length,
@@ -602,225 +620,180 @@ const buildAlgoResult = (
   }
 }
 
+const resolveGridPlanningTarget = (start: { lat: number; lng: number }, end: { lat: number; lng: number }, taskKey = '') => {
+  const mid = resolveMissionIdForRl()
+  const geoMatched = mid > 0 && isMissionGeoMatch(mid, start, end)
+  return {
+    missionId: geoMatched ? mid : 0,
+    taskKey: geoMatched ? '' : (taskKey || buildRlTaskKey(start, end, selectedTask.value?.taskId))
+  }
+}
+
 const callRlSegment = async (
   segStart: { lat: number; lng: number },
   segEnd: { lat: number; lng: number },
-  cruiseAlt: number,
-  opts?: {
-    qOnly?: boolean
-    stochasticInference?: boolean
-    inferenceNoiseSigma?: number
-    disableAutoFallbackRetry?: boolean
-  }
+  cruiseAlt: number
 ) => {
   const mid = resolveMissionIdForRl()
-  const qOnly = typeof opts?.qOnly === 'boolean' ? opts.qOnly : false
-  const stochasticInference = typeof opts?.stochasticInference === 'boolean'
-    ? opts.stochasticInference
-    : false
-  const noiseSigma = typeof opts?.inferenceNoiseSigma === 'number'
-    ? Number(opts.inferenceNoiseSigma || 0)
-    : 0
+  const anchorStart = missionAnchorStart.value || segStart
+  const anchorEnd = missionAnchorEnd.value || segEnd
+  const geoMatched = mid > 0 && isMissionGeoMatch(mid, anchorStart, anchorEnd)
+
+  if (mid <= 0) {
+    throw new Error('未能匹配 Python 离线 mission，强化学习仅支持 Mission 1–5 预训练任务')
+  }
+  if (!geoMatched) {
+    const dist = Math.round(getMissionGeoDistance(mid, anchorStart, anchorEnd))
+    throw new Error(
+      `起终点与 Mission ${mid} 训练锚点偏差 ${dist} m（>${MISSION_GEO_MAX_DISTANCE_M} m），请先执行 offline_train 或更换起终点`
+    )
+  }
+
   const startWgs = gcj02ToWgs84({ lng: segStart.lng, lat: segStart.lat })
   const endWgs = gcj02ToWgs84({ lng: segEnd.lng, lat: segEnd.lat })
   const rlResp = await apiPlanRlPath({
     startPoint: [startWgs.lat, startWgs.lng, cruiseAlt],
     endPoint: [endWgs.lat, endWgs.lng, cruiseAlt],
-    qOnly,
-    stochasticInference,
-    inferenceNoiseSigma: noiseSigma,
-    disableAutoFallbackRetry: Boolean(opts?.disableAutoFallbackRetry),
-    missionId: mid > 0 ? mid : undefined
+    qOnly: true,
+    replayCachedPath: true,
+    stochasticInference: false,
+    inferenceNoiseSigma: 0,
+    disableAutoFallbackRetry: true,
+    missionId: mid
   })
-  if (rlResp?.code !== 200 || !rlResp?.data?.path) {
+  if (rlResp?.code !== 200) {
     throw new Error(rlResp?.msg || '强化学习路径规划失败')
   }
-  const rawWgs = normalizeGeoPathPoints(rlResp.data.path as any[]).map((p) => ({
-    lat: p.lat,
-    lng: p.lng,
-    alt: Number(p.alt ?? cruiseAlt)
-  }))
-  const raw = convertPathWgs84ToGcj02(rawWgs as any).map((p) => ({
-    lat: p.lat,
-    lng: p.lng,
-    alt: Number(p.alt ?? cruiseAlt)
-  }))
-  return { raw, rawWgs, rlMeta: rlResp.data }
-}
-
-const runRlAlongCorridor = async (
-  base2d: Array<{ lng: number; lat: number }>,
-  start: { lng: number; lat: number },
-  end: { lng: number; lat: number },
-  cruiseAlt: number,
-  corridorLabel: string
-) => {
-  const t0 = performance.now()
-  if (!base2d || base2d.length < 2) {
-    throw new Error('路网走廊为空')
+  const d = rlResp.data as Record<string, unknown>
+  const hasPath =
+    (Array.isArray(d?.path) && (d.path as unknown[]).length > 0) ||
+    (Array.isArray(d?.path_wgs84) && (d.path_wgs84 as unknown[]).length > 0) ||
+    (Array.isArray(d?.pathWgs84) && (d.pathWgs84 as unknown[]).length > 0) ||
+    (Array.isArray(d?.pathGrid) && (d.pathGrid as unknown[]).length > 0)
+  if (!hasPath) {
+    throw new Error(rlResp?.msg || '强化学习路径规划失败')
   }
-  const verts = subsamplePolylineForSegments(base2d, 8)
-  verts[0] = { lng: start.lng, lat: start.lat }
-  verts[verts.length - 1] = { lng: end.lng, lat: end.lat }
-
-  const merged: Array<{ lat: number; lng: number; alt: number }> = []
-  let rlMeta: any = null
-  let segFail = 0
-
-  for (let i = 0; i < verts.length - 1; i++) {
-    const s = verts[i]
-    const e = verts[i + 1]
-    try {
-      const { raw, rlMeta: meta } = await callRlSegment(
-        { lat: s.lat, lng: s.lng },
-        { lat: e.lat, lng: e.lng },
-        cruiseAlt
-      )
-      rlMeta = meta
-      if (Array.isArray(meta?.obstacles) && meta.obstacles.length) {
-        planObstacles.value = [...meta.obstacles]
-      }
-      const chunk = i > 0 && raw.length ? raw.slice(1) : raw
-      merged.push(...chunk)
-    } catch {
-      segFail++
-      const fallback = slicePolylineBetween(base2d, s, e).map((p) => ({
-        lat: p.lat,
-        lng: p.lng,
-        alt: cruiseAlt
-      }))
-      const chunk = i > 0 && fallback.length ? fallback.slice(1) : fallback
-      merged.push(...chunk)
+  const replayCached =
+    (rlResp.data as Record<string, unknown>)?.replayCached === true ||
+    (rlResp.data as Record<string, unknown>)?.mode === 'replay_cached'
+  const raw = decodeRlApiPathToGcj02(
+    rlResp.data as Record<string, unknown>,
+    mid,
+    { lat: segStart.lat, lng: segStart.lng },
+    { lat: segEnd.lat, lng: segEnd.lng },
+    cruiseAlt,
+    { warpToUserAnchors: true, defaultAlt: cruiseAlt }
+  )
+  if (raw.length < 2) {
+    throw new Error('强化学习路径坐标转换失败，请确认 Python/Java 服务已重启')
+  }
+  const rawWgs = raw.map((p) => {
+    const wgs = gcj02ToWgs84({ lng: p.lng, lat: p.lat })
+    return { lat: wgs.lat, lng: wgs.lng, alt: p.alt }
+  })
+  return {
+    raw,
+    rawWgs,
+    rlMeta: {
+      ...rlResp.data,
+      pyMissionId: mid,
+      qTableMode: replayCached ? 'mission_replay_cache' : 'mission_offline'
     }
   }
+}
 
-  if (merged.length < 2) {
-    merged.length = 0
-    merged.push(
-      { lat: start.lat, lng: start.lng, alt: cruiseAlt },
-      ...base2d.map((p) => ({ lat: p.lat, lng: p.lng, alt: cruiseAlt })),
-      { lat: end.lat, lng: end.lng, alt: cruiseAlt }
-    )
-  }
-
+const runRlPlanning = async (start: any, end: any) => {
+  const cruiseAlt = Number(cruiseAltitudeM.value || 0) || 0
+  const t0 = performance.now()
+  const { raw, rlMeta } = await callRlSegment(start, end, cruiseAlt)
+  planObstacles.value = Array.isArray(rlMeta?.obstacles) ? [...rlMeta.obstacles] : []
   const note =
-    segFail > 0
-      ? `沿${corridorLabel}分段 RL（${segFail} 段降级为走廊折线）`
-      : `沿${corridorLabel}分段 RL`
+    rlMeta?.qTableMode === 'mission_replay_cache'
+      ? rlMeta?.rlSuccess === false
+        ? '离线训练缓存路径（标记未达终点）'
+        : '离线训练缓存路径复现（WGS84→GCJ02 配准，未做 Q 表推理）'
+      : rlMeta?.rlSuccess === false
+        ? '离线 Q 表推理未到达终点'
+        : '离线 Q 表推理（Python 预训练 mission）'
   return {
-    result: buildAlgoResult(merged, '强化学习', Math.round(performance.now() - t0), note),
+    result: buildAlgoResult(raw, '强化学习', Math.round(performance.now() - t0), note),
     rlMeta
   }
 }
 
-const runRlPlanning = async (start: any, end: any, mode: 'offline' | 'online' = 'online') => {
-  const cruiseAlt = Number(cruiseAltitudeM.value || 0) || 0
-  const startSimple = { lng: start.lng, lat: start.lat }
-  const endSimple = { lng: end.lng, lat: end.lat }
-
-  if (mode === 'offline') {
-    // 离线Q表：Python 在训练锚点栅格推理；前端将轨迹配准到地图起终点以便与 A*/GA 叠合。
-    const t0 = performance.now()
-    const mid = resolveMissionIdForRl()
-    const trainAnchor = mid > 0 ? getMissionTrainAnchor(mid) : null
-    const { raw, rawWgs, rlMeta } = await callRlSegment(start, end, cruiseAlt, {
-      qOnly: true,
-      stochasticInference: false,
-      inferenceNoiseSigma: 0,
-      disableAutoFallbackRetry: true
-    })
-    planObstacles.value = Array.isArray(rlMeta?.obstacles) ? [...rlMeta.obstacles] : []
-
-    let displayPath = raw
-    let note = rlMeta?.rlSuccess === false
-      ? '离线Q表直推未到达终点（未启用在线回退）'
-      : '离线Q表直推（训练栅格）'
-
-    if (trainAnchor && rawWgs.length >= 2) {
-      const startWgs = gcj02ToWgs84({ lng: start.lng, lat: start.lat })
-      const endWgs = gcj02ToWgs84({ lng: end.lng, lat: end.lat })
-      const warpedWgs = warpOfflineRlPathToUserAnchors(
-        rawWgs,
-        trainAnchor.start,
-        trainAnchor.goal,
-        { lat: startWgs.lat, lng: startWgs.lng, alt: cruiseAlt },
-        { lat: endWgs.lat, lng: endWgs.lng, alt: cruiseAlt }
-      )
-      displayPath = convertPathWgs84ToGcj02(warpedWgs as any).map((p) => ({
-        lat: p.lat,
-        lng: p.lng,
-        alt: Number(p.alt ?? cruiseAlt)
-      }))
-      note = rlMeta?.rlSuccess === false
-        ? `${note}；已尝试对齐地图起终点`
-        : '离线Q表直推（WGS84→GCJ02 后已对齐高德地图起终点）'
-    }
-
-    return {
-      result: buildAlgoResult(displayPath, '强化学习', Math.round(performance.now() - t0), note),
-      rlMeta: { ...rlMeta, mapWarpApplied: Boolean(trainAnchor) }
-    }
-  }
-
-  let directError = ''
-  try {
-    // 在线模式先执行同起终点直连 RL，失败后再按道路/水域走廊分段回退。
-    const t0 = performance.now()
-    const { raw, rlMeta } = await callRlSegment(start, end, cruiseAlt)
-    planObstacles.value = Array.isArray(rlMeta?.obstacles) ? [...rlMeta.obstacles] : []
-    const directResult = buildAlgoResult(
-      raw,
-      '强化学习',
-      Math.round(performance.now() - t0),
-      rlMeta?.rlSuccess === false ? '直连 RL 未到达终点（已展示推理轨迹）' : '直连 RL 推理'
-    )
-    if (rlMeta?.rlSuccess !== false) {
-      return { result: directResult, rlMeta }
-    }
-    if (selectedPathType.value !== WATER_PATH_TYPE && !ROAD_PATH_TYPES.has(selectedPathType.value)) {
-      return { result: directResult, rlMeta }
-    }
-    directError = '直连 RL 未到达终点'
-  } catch (e: any) {
-    directError = e?.message || String(e)
-  }
-
-  if (selectedPathType.value === WATER_PATH_TYPE) {
-    const water = await resolveWaterBaseRoute(startSimple, endSimple)
-    const base2d = (water.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat }))
-    const corridor = await runRlAlongCorridor(base2d, startSimple, endSimple, cruiseAlt, water.algorithm || '水域路网')
-    if (directError) {
-      corridor.result.note = `${corridor.result.note}（直连失败：${directError}）`
-    }
-    return corridor
-  }
-
-  if (ROAD_PATH_TYPES.has(selectedPathType.value)) {
-    try {
-      const road = await planRoadInspectionRoute(
-        { map: map.value, targetAltitudeM: cruiseAltitudeM.value },
-        startSimple,
-        endSimple,
-        cruiseAlt
-      )
-      const base2d = (road.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat }))
-      const corridor = await runRlAlongCorridor(base2d, startSimple, endSimple, cruiseAlt, road.algorithm || '驾车路网')
-      if (directError) {
-        corridor.result.note = `${corridor.result.note}（直连失败：${directError}）`
-      }
-      return corridor
-    } catch (e: any) {
-      if (directError) {
-        throw new Error(`${directError}；道路走廊分段失败：${e?.message || e}`)
-      }
-      console.warn('道路走廊 RL 失败，回退直连 RL 结果', e)
-    }
-  }
-
-  throw new Error(directError || '强化学习路径规划失败')
+const anchorPathEndpoints = (
+  raw2d: Array<{ lng: number; lat: number }>,
+  start: { lng: number; lat: number },
+  end: { lng: number; lat: number }
+) => {
+  if (!raw2d?.length) return raw2d
+  const out = raw2d.map((p) => ({ lng: Number(p.lng), lat: Number(p.lat) }))
+  out[0] = { lng: Number(start.lng), lat: Number(start.lat) }
+  out[out.length - 1] = { lng: Number(end.lng), lat: Number(end.lat) }
+  return out
 }
 
-const runAstarPlanning = async (start: any, end: any, polygons: any[]) => {
+/** 非道路巡检：A* 与 GA 走 Python 2.5D 建筑栅格（与 RL 同环境） */
+const runPythonGridPlanning = async (
+  start: { lng: number; lat: number },
+  end: { lng: number; lat: number },
+  algorithm: 'astar' | 'ga',
+  opts?: { taskKey?: string; missionId?: number }
+) => {
+  const cruiseAlt = Number(cruiseAltitudeM.value || 0) || 100
+  const startWgs = gcj02ToWgs84({ lng: start.lng, lat: start.lat })
+  const endWgs = gcj02ToWgs84({ lng: end.lng, lat: end.lat })
+  const resp: any = await planGridPath({
+    startPoint: [startWgs.lat, startWgs.lng, cruiseAlt],
+    endPoint: [endWgs.lat, endWgs.lng, cruiseAlt],
+    taskKey: opts?.missionId ? undefined : opts?.taskKey,
+    missionId: opts?.missionId && opts.missionId > 0 ? opts.missionId : undefined,
+    algorithm
+  })
+  if (resp?.code !== 200 || !resp?.data?.path?.length) {
+    throw new Error(resp?.msg || resp?.data?.error || 'Python 栅格路径规划失败')
+  }
+  const rawWgs = normalizeGeoPathPoints(resp.data.path as any[])
+  const rawGcj = convertPathWgs84ToGcj02(rawWgs as any).map((p) => ({
+    lng: p.lng,
+    lat: p.lat,
+    alt: Number(p.alt ?? cruiseAlt)
+  }))
+  const note =
+    algorithm === 'ga'
+      ? 'Python 2.5D 建筑栅格遗传算法（高空避障）'
+      : 'Python 2.5D 建筑栅格 A*（高空避障）'
+  return { rawGcj, rawWgs, note }
+}
+
+const shouldUsePythonGridPlanner = () =>
+  selectedPathType.value !== WATER_PATH_TYPE && !ROAD_PATH_TYPES.has(selectedPathType.value)
+
+const planGaodeRoadPath2d = async (
+  start: { lng: number; lat: number },
+  end: { lng: number; lat: number }
+) => {
+  const road = await planRoadInspectionRoute(
+    { map: map.value, targetAltitudeM: cruiseAltitudeM.value },
+    start,
+    end,
+    Number(cruiseAltitudeM.value || 0) || 0
+  )
+  const raw2d = anchorPathEndpoints(
+    (road.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat })),
+    start,
+    end
+  )
+  if (raw2d.length < 2) throw new Error('高德道路路径过短')
+  return { raw2d, note: road.algorithm || '高德驾车路网规划' }
+}
+
+const runAstarPlanning = async (
+  start: any,
+  end: any,
+  polygons: any[],
+  taskKey = ''
+) => {
   const t0 = performance.now()
   const startSimple = { lng: start.lng, lat: start.lat }
   const endSimple = { lng: end.lng, lat: end.lat }
@@ -831,7 +804,11 @@ const runAstarPlanning = async (start: any, end: any, polygons: any[]) => {
   if (selectedPathType.value === WATER_PATH_TYPE) {
     try {
       const water = await resolveWaterBaseRoute(startSimple, endSimple)
-      raw2d = (water.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat }))
+      raw2d = anchorPathEndpoints(
+        (water.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat })),
+        startSimple,
+        endSimple
+      )
       note = water.algorithm || '水域步行/覆盖路网'
     } catch (e: any) {
       raw2d = useAvoid
@@ -841,48 +818,64 @@ const runAstarPlanning = async (start: any, end: any, polygons: any[]) => {
     }
   } else if (ROAD_PATH_TYPES.has(selectedPathType.value)) {
     try {
-      const road = await planRoadInspectionRoute(
-        { map: map.value, targetAltitudeM: cruiseAltitudeM.value },
-        startSimple,
-        endSimple,
-        Number(cruiseAltitudeM.value || 0) || 0
-      )
-      raw2d = (road.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat }))
-      note = road.algorithm || '沿真实道路'
+      const road = await planGaodeRoadPath2d(startSimple, endSimple)
+      raw2d = road.raw2d
+      note = road.note
     } catch (e: any) {
       raw2d = useAvoid
         ? planPathAStarGridAvoidPolygons(startSimple, endSimple, polygons)
         : planPathAStarGrid(startSimple, endSimple)
-      note = `道路规划失败，已降级网格 A*：${e?.message || e}`
+      note = `高德道路规划失败，已降级网格 A*：${e?.message || e}`
     }
   } else {
-    raw2d = useAvoid
-      ? planPathAStarGridAvoidPolygons(startSimple, endSimple, polygons)
-      : planPathAStarGrid(startSimple, endSimple)
-    note = '网格 A*（高空避障）'
+    const gridTarget = resolveGridPlanningTarget(startSimple, endSimple, taskKey)
+    try {
+      const grid = await runPythonGridPlanning(startSimple, endSimple, 'astar', gridTarget)
+      raw2d = anchorPathEndpoints(
+        grid.rawGcj.map((p) => ({ lng: p.lng, lat: p.lat })),
+        startSimple,
+        endSimple
+      )
+      note = grid.note
+      const wgsPts = grid.rawWgs.map((p) => ({ lng: p.lng, lat: p.lat, alt: p.alt }))
+      return buildAlgoResult(raw2d, 'A*算法', Math.round(performance.now() - t0), note, wgsPts)
+    } catch (e: any) {
+      raw2d = useAvoid
+        ? planPathAStarGridAvoidPolygons(startSimple, endSimple, polygons)
+        : planPathAStarGrid(startSimple, endSimple)
+      note = `Python 栅格 A* 失败，已降级本地网格：${e?.message || e}`
+    }
   }
 
-  const astarResult = buildAlgoResult(raw2d, 'A*算法', Math.round(performance.now() - t0), note)
-  return astarResult
+  const result = buildAlgoResult(raw2d, 'A*算法', Math.round(performance.now() - t0), note)
+  return result
 }
 
-const runGaPlanning = async (start: any, end: any, polygons: any[]) => {
+const runGaPlanning = async (
+  start: any,
+  end: any,
+  polygons: any[],
+  taskKey = ''
+) => {
   const t0 = performance.now()
   const startSimple = { lng: start.lng, lat: start.lat }
   const endSimple = { lng: end.lng, lat: end.lat }
   const useAvoid = !DISABLE_NOFLY_ON_DRIVING_PLAN && polygons.length > 0
-  const finishGa = (raw2d: Array<{ lng: number; lat: number }>, note: string) => {
-    const gaResult = buildAlgoResult(raw2d, '遗传算法', Math.round(performance.now() - t0), note)
-    return gaResult
-  }
+  const finishGa = (
+    raw2d: Array<{ lng: number; lat: number }>,
+    note: string,
+    pathPointsWgs?: Array<{ lng: number; lat: number; alt?: number }>
+  ) => buildAlgoResult(raw2d, '遗传算法', Math.round(performance.now() - t0), note, pathPointsWgs)
 
   if (selectedPathType.value === WATER_PATH_TYPE) {
     try {
       const water = await resolveWaterBaseRoute(startSimple, endSimple)
-      const base2d = (water.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat }))
-      if (base2d.length < 2) {
-        throw new Error('水域基准路径过短')
-      }
+      const base2d = anchorPathEndpoints(
+        (water.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat })),
+        startSimple,
+        endSimple
+      )
+      if (base2d.length < 2) throw new Error('水域基准路径过短')
       const raw2d = planPathGeneticAlongPolyline(base2d, {
         maxLateralM: Math.min(40, Math.max(12, riverCenterOffsetM.value * 0.6)),
         riverBankSide: riverBankSide.value
@@ -902,33 +895,32 @@ const runGaPlanning = async (start: any, end: any, polygons: any[]) => {
 
   if (ROAD_PATH_TYPES.has(selectedPathType.value)) {
     try {
-      const road = await planRoadInspectionRoute(
-        { map: map.value, targetAltitudeM: cruiseAltitudeM.value },
-        startSimple,
-        endSimple,
-        Number(cruiseAltitudeM.value || 0) || 0
-      )
-      const base2d = (road.pathPoints || []).map((p) => ({ lng: p.lng, lat: p.lat }))
-      if (base2d.length >= 2) {
-        const raw2d = planPathGeneticAlongPolyline(base2d, {
-          maxLateralM: 16,
-          controlCount: Math.min(12, Math.max(6, Math.round(base2d.length / 12))),
-          riverBankSide: 'left'
-        })
-        return finishGa(raw2d, '沿真实道路遗传优化')
-      }
+      const road = await planGaodeRoadPath2d(startSimple, endSimple)
+      return finishGa(road.raw2d, road.note)
     } catch (e: any) {
       const raw2d = useAvoid
         ? planPathGeneticGridAvoidPolygons(startSimple, endSimple, polygons)
         : planPathGeneticGrid(startSimple, endSimple)
-      return finishGa(raw2d, `道路路网 GA 失败，已降级网格：${e?.message || e}`)
+      return finishGa(raw2d, `高德道路规划失败，已降级网格 GA：${e?.message || e}`)
     }
   }
 
-  const raw2d = useAvoid
-    ? planPathGeneticGridAvoidPolygons(startSimple, endSimple, polygons)
-    : planPathGeneticGrid(startSimple, endSimple)
-  return finishGa(raw2d, '遗传算法网格搜索')
+  const gridTarget = resolveGridPlanningTarget(startSimple, endSimple, taskKey)
+  try {
+    const grid = await runPythonGridPlanning(startSimple, endSimple, 'ga', gridTarget)
+    const raw2d = anchorPathEndpoints(
+      grid.rawGcj.map((p) => ({ lng: p.lng, lat: p.lat })),
+      startSimple,
+      endSimple
+    )
+    const wgsPts = grid.rawWgs.map((p) => ({ lng: p.lng, lat: p.lat, alt: p.alt }))
+    return finishGa(raw2d, grid.note, wgsPts)
+  } catch (e: any) {
+    const raw2d = useAvoid
+      ? planPathGeneticGridAvoidPolygons(startSimple, endSimple, polygons)
+      : planPathGeneticGrid(startSimple, endSimple)
+    return finishGa(raw2d, `Python 栅格 GA 失败，已降级本地网格：${e?.message || e}`)
+  }
 }
 
 const applyPlanningResults = async (results: typeof tripleAlgoResults.value, rlMeta?: any) => {
@@ -958,6 +950,7 @@ const applyPlanningResults = async (results: typeof tripleAlgoResults.value, rlM
     tripleAlgoResults: results,
     algorithm: primary.algorithm,
     rlMeta: rlMeta || undefined,
+    rlTaskKey: rlMeta?.taskKey || undefined,
     obstacles: planObstacles.value
   })
   if (results.length >= 3) {
@@ -978,7 +971,10 @@ const applyPlanningResults = async (results: typeof tripleAlgoResults.value, rlM
     }).catch(() => {})
   }
   try {
-    window.dispatchEvent(new CustomEvent('uav-reload-rl-plots', { detail: { t: Date.now() } }))
+    const mid = resolveMissionIdForRl()
+    window.dispatchEvent(
+      new CustomEvent('uav-reload-rl-plots', { detail: { missionId: mid > 0 ? mid : undefined, t: Date.now() } })
+    )
   } catch {}
 }
 
@@ -991,31 +987,45 @@ const calculateSinglePathByApi = async (start: any, end: any) => {
     planObstacles.value = []
     tripleAlgoResults.value = []
     clearComparePolylines()
-    const zones = await loadNoFlyZones()
-    const polygons = (zones || [])
-      .filter((z: any) => Array.isArray(z?.path) && z.path.length >= 3)
-      .map((z: any) => z.path)
 
     let one: (typeof tripleAlgoResults.value)[0] | null = null
     let rlMeta: any = null
     const algo = singleAlgorithm.value
 
     if (algo === '强化学习') {
-      const pack = await runRlPlanning(start, end, 'online')
+      const pyMission = resolveMissionIdForRl()
+      const geoMatched =
+        pyMission > 0 &&
+        isMissionGeoMatch(pyMission, missionAnchorStart.value || start, missionAnchorEnd.value || end)
+      if (!geoMatched) {
+        throw new Error(
+          pyMission > 0
+            ? `起终点未对齐 Mission ${pyMission} 预训练锚点，强化学习不可用`
+            : '未匹配 Python 离线 mission（Mission 1–5），强化学习不可用'
+        )
+      }
+      const pack = await runRlPlanning(start, end)
       one = pack.result
       rlMeta = pack.rlMeta
       if (rlMeta?.rlSuccess === false) {
-        ElMessage.warning('强化学习未到达终点，仍展示推理轨迹')
+        ElMessage.warning('离线 Q 表推理未到达终点，仍展示轨迹')
       }
     } else if (algo === 'A*算法') {
-      one = await runAstarPlanning(start, end, polygons)
-      void exportPathForOfflineTrain('A*算法', one.pathPoints || [])
+      const gridTaskKey = shouldUsePythonGridPlanner()
+        ? buildRlTaskKey(start, end, selectedTask.value?.taskId)
+        : ''
+      one = await runAstarPlanning(start, end, [], gridTaskKey)
     } else {
-      one = await runGaPlanning(start, end, polygons)
-      void exportPathForOfflineTrain('遗传算法', one.pathPoints || [])
+      const gridTaskKey = shouldUsePythonGridPlanner()
+        ? buildRlTaskKey(start, end, selectedTask.value?.taskId)
+        : ''
+      one = await runGaPlanning(start, end, [], gridTaskKey)
     }
 
     await applyPlanningResults([one], rlMeta)
+    if (one && (one.algorithm === 'A*算法' || one.algorithm === '遗传算法')) {
+      void syncExternalPathsForPlots([one])
+    }
     runUavEnvPlot(start, end)
     ElMessage.success(`${algo} 规划完成（${selectedPathType.value}）`)
   } catch (error: any) {
@@ -1082,70 +1092,88 @@ const calculatePathByApi = async (start, end) => {
     missionAnchorStart.value = { lat: Number(start.lat), lng: Number(start.lng) }
     missionAnchorEnd.value = { lat: Number(end.lat), lng: Number(end.lng) }
     const pyMission = resolveMissionIdForRl()
-    if (pyMission <= 0) {
-      throw new Error('未能自动匹配 Python 离线 mission 编号，请选择已训练任务或填写匹配的起终点名称')
+    const geoMatched =
+      pyMission > 0 &&
+      isMissionGeoMatch(pyMission, missionAnchorStart.value, missionAnchorEnd.value)
+    const gridTaskKey = shouldUsePythonGridPlanner()
+      ? buildRlTaskKey(start, end, selectedTask.value?.taskId)
+      : ''
+
+    if (geoMatched) {
+      ElMessage.info(
+        `三算法对比（mission=${pyMission}）：RL 复现 offline_train 缓存路径（非在线 Q 推理）；A*/GA 使用高德路网（道路巡检）或栅格（其他类型）。`
+      )
+    } else {
+      ElMessage.info('当前起终点未匹配预训练 mission，强化学习不可用；A*/GA 按路径类型规划。')
     }
-    ElMessage.info(
-      `离线Q表在训练栅格推理（mission=${pyMission}），返回后将从 WGS84 转为高德 GCJ-02 并对齐地图起终点。`
-    )
     latestGoalPoint.value = { lng: end.lng, lat: end.lat }
     isRlFailureDisplayMode.value = false
     planObstacles.value = []
     tripleAlgoResults.value = []
     clearComparePolylines()
 
-    const zones = await loadNoFlyZones()
-    const polygons = (zones || [])
-      .filter((z: any) => Array.isArray(z?.path) && z.path.length >= 3)
-      .map((z: any) => z.path)
-
     const [rlPack, astarResult, gaResult] = await Promise.all([
-      runRlPlanning(start, end, 'offline').catch((e: any) => ({ error: e?.message || String(e) })),
-      Promise.resolve().then(() => runAstarPlanning(start, end, polygons)).catch((e: any) => ({ error: e?.message || String(e) })),
-      Promise.resolve().then(() => runGaPlanning(start, end, polygons)).catch((e: any) => ({ error: e?.message || String(e) }))
+      (geoMatched
+        ? runRlPlanning(start, end)
+        : Promise.resolve({
+            error:
+              pyMission > 0
+                ? `起终点未对齐 Mission ${pyMission} 预训练锚点`
+                : '未匹配 Python 离线 mission（Mission 1–5）'
+          })
+      ).catch((e: any) => ({ error: e?.message || String(e) })),
+      Promise.resolve()
+        .then(() => runAstarPlanning(start, end, [], gridTaskKey))
+        .catch((e: any) => ({ error: e?.message || String(e) })),
+      Promise.resolve()
+        .then(() => runGaPlanning(start, end, [], gridTaskKey))
+        .catch((e: any) => ({ error: e?.message || String(e) }))
     ])
 
     const results: typeof tripleAlgoResults.value = []
     let rlMeta: any = null
+    let rlErr = '未知错误'
+    let astarErr = '未知错误'
+    let gaErr = '未知错误'
 
     if (rlPack && !(rlPack as any).error && (rlPack as any).result) {
       results.push((rlPack as any).result)
       rlMeta = (rlPack as any).rlMeta
       if (rlMeta?.rlSuccess === false) {
         isRlFailureDisplayMode.value = true
-        ElMessage.warning(
-          '离线Q表直推未到达终点，已保留轨迹用于对比。'
-        )
+        ElMessage.warning('离线 Q 表推理未到达终点，已保留轨迹用于对比。')
       }
     } else {
-      const rlErr = (rlPack as any)?.error || '未知错误'
-      ElMessage.warning(`离线Q表 RL 失败（未启用在线回退）：${rlErr}`)
-      ElMessage.error(`强化学习失败：${rlErr}`)
+      rlErr = (rlPack as any)?.error || '未知错误'
+      ElMessage.warning(`强化学习失败：${rlErr}`)
     }
 
     if (astarResult && !(astarResult as any).error) {
       results.push(astarResult as any)
-      void exportPathForOfflineTrain('A*算法', (astarResult as any).pathPoints || [])
     } else {
-      ElMessage.warning(`A* 失败：${(astarResult as any)?.error || '未知错误'}`)
+      astarErr = (astarResult as any)?.error || '未知错误'
+      ElMessage.warning(`A* 失败：${astarErr}`)
     }
 
     if (gaResult && !(gaResult as any).error) {
       results.push(gaResult as any)
-      void exportPathForOfflineTrain('遗传算法', (gaResult as any).pathPoints || [])
     } else {
-      ElMessage.warning(`遗传算法失败：${(gaResult as any)?.error || '未知错误'}`)
+      gaErr = (gaResult as any)?.error || '未知错误'
+      ElMessage.warning(`遗传算法失败：${gaErr}`)
     }
 
     if (!results.length) {
-      throw new Error('三种算法均未生成有效路径')
+      throw new Error(`三种算法均未生成有效路径。强化学习: ${rlErr}；A*: ${astarErr}；GA: ${gaErr}`)
     }
 
     await applyPlanningResults(results, rlMeta)
+    if (geoMatched) {
+      void syncExternalPathsForPlots(results)
+    }
     runUavEnvPlot(start, end)
-    const pyMissionId = resolveMissionIdForRl()
+    const rlModeLabel = geoMatched ? `离线Q表 mission=${pyMission}` : '不可用'
     ElMessage.success(
-      `三算法对比完成（${selectedPathType.value}，RL=离线Q表，mission=${pyMissionId || '-'}）：已绘制 RL / A* / GA 路径`
+      `三算法对比完成（${selectedPathType.value}，RL=${rlModeLabel}）：已绘制可用算法路径`
     )
   } catch (error: any) {
     console.error('路径规划失败:', error)
@@ -1428,16 +1456,9 @@ const simulateFlight = async () => {
   )
 
   if (result) {
-    flatPathCoords.value = result.flatPathCoords
     pathStats.value = result.pathStats
     showPathInfo.value = true
-    setTimeout(() => initPathChart(), 100)
   }
-}
-
-const initPathChart = () => {
-  if (!chartContainer.value || flatPathCoords.value.length === 0) return
-  distanceChart = initDistanceChart(chartContainer.value, flatPathCoords.value, distanceChart)
 }
 
 const initEnhancedFeatures = async () => {
@@ -1448,7 +1469,7 @@ const initEnhancedFeatures = async () => {
   enhancedManager.value = createPathPlanningEnhanced({
     enableDraggableMarkers: ENABLE_DRAGGABLE_PATH_MARKERS,
     autoLoadWeather: true,
-    autoLoadNoFlyZones: true,
+    autoLoadNoFlyZones: false,
     getLivePathPoints: () => pathPoints.value
   })
 
@@ -1491,7 +1512,6 @@ const clearPath = (opts: { clearStorage?: boolean } | Event = {}) => {
   
   planObstacles.value = []
   pathPoints.value = []
-  flatPathCoords.value = []
   showPathInfo.value = false
   pathStats.value = {
     totalDistance: 0,
@@ -1508,10 +1528,6 @@ const clearPath = (opts: { clearStorage?: boolean } | Event = {}) => {
   compareResults.value = null
   tripleAlgoResults.value = []
   clearComparePolylines()
-  if (distanceChart) {
-    disposeChart(distanceChart)
-    distanceChart = null
-  }
   // 只有用户显式“清除路径”时才清空缓存；页面卸载/切换时不要清空，便于地图展示/路径信息复用
   if (clearStorage) {
     try {
@@ -1545,13 +1561,84 @@ const selectBestUav = () => {
   }
 }
 
-const onMapContainerResize = () => {}
+const uavStatusLabels: Record<number, string> = {
+  1: '正常',
+  2: '任务中',
+  3: '维修中',
+  4: '停用'
+}
+
+const formatDuration = (sec: number) => {
+  if (!sec || sec <= 0) return '—'
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return m > 0 ? `${m} 分 ${s} 秒` : `${s} 秒`
+}
+
+const currentUav = computed(() =>
+  uavList.value.find((x: any) => x.uavId === selectedUav.value) || null
+)
+
+const flightTelemetry = computed(() => {
+  const uav = currentUav.value as any
+  const stats = pathStats.value
+  const speed = Number(stats.avgSpeed || 10) || 10
+  const altitude = Number(cruiseAltitudeM.value || 0) || 0
+  const estSeconds = Number(stats.estimatedTime || 0) || 0
+  const maxMinutes = Number(uav?.uavMaxFlightTime || 0) || 0
+  const maxSeconds = maxMinutes * 60
+  const powerPercent =
+    maxSeconds > 0 && estSeconds > 0
+      ? Math.min(100, Math.round((estSeconds / maxSeconds) * 100))
+      : 0
+  const remainPercent =
+    maxSeconds > 0 && estSeconds > 0 ? Math.max(0, 100 - powerPercent) : 100
+  const remainMinutes =
+    maxMinutes > 0 && estSeconds > 0
+      ? Math.max(0, Math.round(maxMinutes - estSeconds / 60))
+      : maxMinutes || null
+
+  return {
+    model: uav?.uavModel || uav?.uavCode || '未选择无人机',
+    code: uav?.uavCode || '—',
+    type: uav?.uavType || '—',
+    status: uavStatusLabels[uav?.uavStatus as number] || (uav ? '未知' : '—'),
+    statusCode: uav?.uavStatus,
+    speed,
+    speedKmh: (speed * 3.6).toFixed(1),
+    altitude,
+    totalDistance: stats.totalDistance || 0,
+    pointCount: stats.pointCount || 0,
+    estSeconds,
+    estTimeText: formatDuration(estSeconds),
+    remainPercent,
+    powerPercent,
+    remainMinutes,
+    batteryType: uav?.uavBatteryType || '—',
+    batteryCapacity: uav?.uavBatteryCapacity ?? '—',
+    maxFlightTime: maxMinutes || null,
+    hasPath: Boolean(showPathInfo.value && stats.totalDistance > 0),
+    pathType: selectedPathType.value
+  }
+})
+
+const getUavStatusTagType = (code?: number) => {
+  const types: Record<number, string> = { 1: 'success', 2: 'warning', 3: 'danger', 4: 'info' }
+  return types[code || 0] || 'info'
+}
+
+const onMapContainerResize = () => {
+  try {
+    ;(map.value as any)?.resize?.()
+  } catch {}
+}
 
 onMounted(async () => {
   restorePlanningForm()
   window.addEventListener('resize', onMapContainerResize)
   setTimeout(() => {
     initMap()
+    setTimeout(onMapContainerResize, 120)
   }, 500)
 
   await loadData()
@@ -1566,11 +1653,145 @@ onUnmounted(() => {
 
 <template>
   <div class="app-container path-planning-page">
-    <h1 class="art-text">路径规划</h1>
-    
-    <!-- 路径规划表单 -->
-    <div class="card fade-in">
-      <div class="path-form">
+    <div class="pp-page__bg" aria-hidden="true" />
+    <div class="pp-page__decor" aria-hidden="true">
+      <svg class="pp-page__lines" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+        <path class="pp-line" d="M-20 180 Q 320 120, 580 240 T 1100 160" />
+        <path class="pp-line" d="M180 880 Q 460 640, 720 760 T 1300 520" />
+      </svg>
+    </div>
+
+    <header class="pp-page-header fade-in">
+      <div>
+        <h1 class="pp-page-header__title">路径规划</h1>
+        <p class="pp-page-header__desc">地图预览航线，下方配置参数并执行规划</p>
+      </div>
+      <span class="pp-page-header__badge">{{ selectedPathType }}</span>
+    </header>
+
+    <div class="card pp-card pp-workspace fade-in">
+      <div class="pp-map-section">
+        <div class="pp-map-card__head">
+          <span class="pp-map-card__title">航线地图</span>
+          <span class="pp-map-card__meta">{{ is3DMode ? '3D 视图' : '2D 视图' }}</span>
+        </div>
+        <div class="map-workspace">
+          <div class="map-container" :class="{ 'with-three-panel': is3DMode }">
+            <div class="map-stack">
+              <div ref="mapContainer" class="baidu-map-mount"></div>
+
+              <div v-if="tripleAlgoResults.length" class="map-legend-dock">
+                <div class="map-legend-title">路径图例</div>
+                <div v-for="item in tripleAlgoResults" :key="item.algorithm" class="map-legend-item">
+                  <span class="legend-dot" :style="{ background: getAlgorithmColor(item.algorithm) }"></span>
+                  <span>{{ item.algorithm }}</span>
+                  <span class="legend-dist">{{ item.totalDistance }}m</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="flight-info-panel">
+            <div class="flight-info-panel__head">
+              <div>
+                <div class="flight-info-panel__label">当前无人机</div>
+                <div class="flight-info-panel__model">{{ flightTelemetry.model }}</div>
+              </div>
+              <el-tag
+                v-if="currentUav"
+                :type="getUavStatusTagType(flightTelemetry.statusCode)"
+                size="small"
+                effect="plain"
+              >
+                {{ flightTelemetry.status }}
+              </el-tag>
+            </div>
+
+            <div v-if="!currentUav" class="flight-info-panel__empty">
+              请先选择无人机，规划路径后将在此展示飞行参数
+            </div>
+
+            <template v-else>
+              <div class="flight-info-panel__meta">
+                <span>编号 {{ flightTelemetry.code }}</span>
+                <span>{{ flightTelemetry.type }}</span>
+              </div>
+
+              <div class="flight-info-metrics">
+                <div class="flight-info-metric">
+                  <span class="flight-info-metric__label">飞行速度</span>
+                  <span class="flight-info-metric__value">{{ flightTelemetry.speed }}<small>m/s</small></span>
+                  <span class="flight-info-metric__sub">≈ {{ flightTelemetry.speedKmh }} km/h</span>
+                </div>
+                <div class="flight-info-metric">
+                  <span class="flight-info-metric__label">飞行高度</span>
+                  <span class="flight-info-metric__value">{{ flightTelemetry.altitude }}<small>m</small></span>
+                  <span class="flight-info-metric__sub">巡航高度</span>
+                </div>
+                <div class="flight-info-metric">
+                  <span class="flight-info-metric__label">剩余电量</span>
+                  <span class="flight-info-metric__value">{{ flightTelemetry.remainPercent }}<small>%</small></span>
+                  <span class="flight-info-metric__sub">
+                    {{ flightTelemetry.hasPath ? '规划后预估' : '满电待命' }}
+                  </span>
+                </div>
+                <div class="flight-info-metric">
+                  <span class="flight-info-metric__label">预计耗时</span>
+                  <span class="flight-info-metric__value flight-info-metric__value--sm">
+                    {{ flightTelemetry.hasPath ? flightTelemetry.estTimeText : '—' }}
+                  </span>
+                  <span class="flight-info-metric__sub">
+                    {{ flightTelemetry.maxFlightTime ? `最大续航 ${flightTelemetry.maxFlightTime} min` : '未设续航' }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="flight-info-battery">
+                <div class="flight-info-battery__row">
+                  <span>电量消耗预估</span>
+                  <span>{{ flightTelemetry.hasPath ? flightTelemetry.powerPercent : 0 }}%</span>
+                </div>
+                <div class="flight-info-battery__track">
+                  <div
+                    class="flight-info-battery__bar flight-info-battery__bar--remain"
+                    :style="{ width: flightTelemetry.remainPercent + '%' }"
+                  />
+                </div>
+              </div>
+
+              <ul class="flight-info-details">
+                <li>
+                  <span>航程</span>
+                  <strong>{{ flightTelemetry.hasPath ? flightTelemetry.totalDistance + ' m' : '—' }}</strong>
+                </li>
+                <li>
+                  <span>航点数</span>
+                  <strong>{{ flightTelemetry.hasPath ? flightTelemetry.pointCount : '—' }}</strong>
+                </li>
+                <li>
+                  <span>电池</span>
+                  <strong>{{ flightTelemetry.batteryType }} · {{ flightTelemetry.batteryCapacity }} mAh</strong>
+                </li>
+                <li>
+                  <span>剩余续航</span>
+                  <strong>
+                    {{
+                      flightTelemetry.hasPath && flightTelemetry.remainMinutes != null
+                        ? flightTelemetry.remainMinutes + ' min'
+                        : flightTelemetry.maxFlightTime
+                          ? flightTelemetry.maxFlightTime + ' min'
+                          : '—'
+                    }}
+                  </strong>
+                </li>
+              </ul>
+            </template>
+          </aside>
+        </div>
+      </div>
+
+      <div class="pp-control-dock">
+        <div class="path-form">
         <el-form 
           :model="{
             startPoint: startPoint,
@@ -1650,6 +1871,9 @@ onUnmounted(() => {
               controls-position="right"
               style="width: 140px;"
             />
+            <span class="cruise-alt-hint">
+              栅格原生上限约 {{ rlMaxCruiseAtNativeScaleM }}m（2m/格）；更高时自动扩展 Z 比例（改高度会重训 Q 表）
+            </span>
           </el-form-item>
         </el-form>
         
@@ -1696,130 +1920,6 @@ onUnmounted(() => {
           </el-button>
         </div>
       </div>
-    </div>
-    <!-- 地图展示：3D 模式下左侧地图 + 右侧独立三维仿真，避免 WebGL 与底图同一区域重叠 -->
-    <div class="card fade-in" style="margin-top: 20px;">
-      <div class="map-container">
-        <div class="map-stack">
-          <div ref="mapContainer" class="baidu-map-mount"></div>
-
-          <div v-if="tripleAlgoResults.length" class="map-legend-dock">
-            <div class="map-legend-title">路径图例</div>
-            <div v-for="item in tripleAlgoResults" :key="item.algorithm" class="map-legend-item">
-              <span class="legend-dot" :style="{ background: getAlgorithmColor(item.algorithm) }"></span>
-              <span>{{ item.algorithm }}</span>
-              <span class="legend-dist">{{ item.totalDistance }}m</span>
-            </div>
-          </div>
-
-        </div>
-      </div>
-    </div>
-    
-    <!-- 路径信息可视化面板 -->
-    <div v-if="showPathInfo" class="card fade-in" style="margin-top: 20px;">
-      <div class="path-info-panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <el-icon><TrendCharts /></el-icon>
-            路径参数可视化
-          </div>
-        </div>
-        
-        <!-- 统计卡片 -->
-        <div class="stats-grid">
-          <div class="stat-card stat-gradient-1">
-            <div class="stat-icon"><el-icon><Location /></el-icon></div>
-            <div class="stat-content">
-              <div class="stat-label">总距离</div>
-              <div class="stat-value">{{ pathStats.totalDistance }}<span class="stat-unit">米</span></div>
-            </div>
-          </div>
-          <div class="stat-card stat-gradient-2">
-            <div class="stat-icon"><el-icon><Clock /></el-icon></div>
-            <div class="stat-content">
-              <div class="stat-label">预计时间</div>
-              <div class="stat-value">{{ pathStats.estimatedTime }}<span class="stat-unit">秒</span></div>
-            </div>
-          </div>
-          <div class="stat-card stat-gradient-3">
-            <div class="stat-icon"><el-icon><Loading /></el-icon></div>
-            <div class="stat-content">
-              <div class="stat-label">路径点数</div>
-              <div class="stat-value">{{ pathStats.pointCount }}<span class="stat-unit">个</span></div>
-            </div>
-          </div>
-          <div class="stat-card stat-gradient-4">
-            <div class="stat-icon"><el-icon><VideoCamera /></el-icon></div>
-            <div class="stat-content">
-              <div class="stat-label">平均速度</div>
-              <div class="stat-value">{{ pathStats.avgSpeed }}<span class="stat-unit">m/s</span></div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 坐标信息 -->
-        <div class="coord-cards">
-          <div class="coord-card coord-start">
-            <div class="coord-label">
-              <el-icon><Location /></el-icon>
-              起点坐标
-            </div>
-            <div class="coord-value">{{ pathStats.startCoord || '暂无' }}</div>
-          </div>
-          <div class="coord-card coord-end">
-            <div class="coord-label">
-              <el-icon><MapLocation /></el-icon>
-              终点坐标
-            </div>
-            <div class="coord-value">{{ pathStats.endCoord || '暂无' }}</div>
-          </div>
-        </div>
-        
-        <!-- 图表容器 -->
-        <div ref="chartContainer" class="chart-container"></div>
-      </div>
-    </div>
-    
-    <!-- 三算法对比（RL / A* / GA） -->
-    <div v-if="tripleAlgoResults.length" class="card fade-in" style="margin-top: 20px;">
-      <div class="compare-panel">
-        <div class="panel-header">
-          <div class="panel-title gradient-text">
-            <el-icon><TrendCharts /></el-icon>
-            三算法路径对比（{{ selectedPathType }}）
-          </div>
-        </div>
-        <div class="comparison-table-wrapper">
-          <table class="comparison-table">
-            <thead>
-              <tr>
-                <th width="18%">算法</th>
-                <th width="18%">总距离</th>
-                <th width="14%">预计时间</th>
-                <th width="12%">路径点数</th>
-                <th width="12%">耗时(ms)</th>
-                <th>说明</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="row in tripleAlgoResults" :key="row.algorithm">
-                <td class="label-cell">
-                  <span class="legend-dot-inline" :style="{ background: getAlgorithmColor(row.algorithm) }"></span>
-                  {{ row.algorithm }}
-                </td>
-                <td class="value-cell">{{ row.totalDistance }} m</td>
-                <td class="value-cell">{{ row.estimatedTime }} s</td>
-                <td class="value-cell">{{ row.pointCount }}</td>
-                <td class="value-cell">{{ row.computationTime ?? '-' }}</td>
-                <td class="value-cell">{{ row.note || '-' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p class="path-compare-hint" style="margin-top: 10px;">
-          道路巡检：A* 走高德驾车路网。水域巡检：三算法均沿步行/河道走廊（河流）或湖泊覆盖线；RL 按走廊分段推理，GA 在走廊内遗传优化。其他类型为网格 A*/GA + RL。三色路径已叠加在高德地图上。
-        </p>
       </div>
     </div>
 

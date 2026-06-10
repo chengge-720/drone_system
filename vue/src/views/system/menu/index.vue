@@ -222,50 +222,64 @@ onMounted(()=>{
 </script>
 
 <template>
-  <div class="app-container">
-    <h1>菜单管理</h1>
+  <div class="admin-page">
+    <div class="admin-page__header">
+      <div>
+        <h1 class="admin-page__title">菜单管理</h1>
+        <p class="admin-page__subtitle">维护系统菜单结构、路由与图标配置</p>
+      </div>
+      <span class="admin-page__header-meta">共 {{ menuList.length }} 个节点</span>
+    </div>
 
-    <!--顶部搜索和按钮-->
-    <div class="card fade-in">
-      <div class="search-container">
-        <el-form :model="query" ref="queryRef" label-width="70px" inline class="search-form">
+    <div class="admin-page__toolbar">
+      <div class="admin-page__search-wrap">
+        <el-form :model="query" ref="queryRef" label-width="70px" inline class="admin-page__search">
           <el-form-item label="菜单名称" prop="menuName">
-            <el-input v-model="query.menuName" placeholder="请输入菜单名称" class="search-input"/>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" icon="Search" @click="handleQuery" class="search-button">搜索</el-button>
-            <el-button icon="Refresh" @click="resetQuery" class="reset-button">清空</el-button>
+            <el-input v-model="query.menuName" placeholder="请输入菜单名称" clearable @keyup.enter="handleQuery" />
           </el-form-item>
         </el-form>
-        <div class="action-buttons">
-          <el-button type="primary" icon="Plus" @click="handleInsert" class="action-button primary">新增</el-button>
+        <div class="admin-page__search-btns">
+          <el-button type="primary" icon="Search" class="admin-page__search-icon-btn" @click="handleQuery" />
+          <el-button icon="Refresh" class="admin-page__search-icon-btn" @click="resetQuery" />
         </div>
+      </div>
+      <div class="admin-page__actions">
+        <el-button type="primary" icon="Plus" @click="handleInsert">新增</el-button>
       </div>
     </div>
 
-    <!-- 列表 -->
-    <el-table :data="menuList" style="width: 100%" border row-key="menuId"
-              :tree-props="{children: 'children' , hasChildren: 'hasChildren'}">
-      <el-table-column prop="menuName" label="菜单名称" align="center"/>
-      <el-table-column prop="icon" label="图标" align="center">
-        <template #default="scope">
-          <svg-icon :icon-class="scope.row.icon"/>
-        </template>
-      </el-table-column>
-      <el-table-column prop="menuSort" label="排序" align="center"/>
-      <el-table-column prop="component" label="菜单路径" align="center"/>
-      <el-table-column label="操作" align="center" width="180">
-        <template #default="scope">
-          <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
-          <el-button link type="danger" icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="admin-page__panel">
+      <div class="admin-page__panel-head">
+        <span class="admin-page__panel-title">菜单树</span>
+        <span class="admin-page__panel-meta">支持目录与菜单层级管理</span>
+      </div>
+      <el-table
+        :data="menuList"
+        class="admin-table"
+        style="width: 100%"
+        border
+        row-key="menuId"
+        :tree-props="{children: 'children' , hasChildren: 'hasChildren'}"
+      >
+        <el-table-column prop="menuName" label="菜单名称" align="left" min-width="180"/>
+        <el-table-column prop="icon" label="图标" align="center" width="80">
+          <template #default="scope">
+            <svg-icon :icon-class="scope.row.icon"/>
+          </template>
+        </el-table-column>
+        <el-table-column prop="menuSort" label="排序" align="center" width="80"/>
+        <el-table-column prop="component" label="菜单路径" align="center" min-width="220" show-overflow-tooltip/>
+        <el-table-column label="操作" align="center" width="168" class-name="admin-table-ops">
+          <template #default="scope">
+            <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)">修改</el-button>
+            <el-button link type="danger" icon="Delete" @click="handleDelete(scope.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
 
-    <!-- 添加或修改菜单对话框 -->
-    <!-- 添加角色管理框 -->
-    <vxe-modal :title="title" width="50%" v-model="open" showFooter show-maximize resize>
-      <el-form ref="menuRef" :model="form" :rules="rules" label-width="80px">
+    <vxe-modal :title="title" width="50%" v-model="open" showFooter show-maximize resize class-name="admin-modal">
+      <el-form ref="menuRef" :model="form" :rules="rules" label-width="80px" class="admin-form">
         <el-row>
           <el-col :span="12">
             <el-form-item label="上级菜单">
@@ -343,111 +357,3 @@ onMounted(()=>{
     </vxe-modal>
   </div>
 </template>
-
-<style scoped>
-/* 搜索和按钮容器样式 */
-.search-container {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 16px;
-}
-
-.search-form {
-  flex: 1;
-  min-width: 300px;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-/* 搜索输入框样式 */
-.search-input {
-  width: 300px;
-  border-radius: 8px;
-  transition: var(--transition);
-}
-
-.search-input:focus {
-  box-shadow: 0 0 0 2px rgba(77, 79, 200, 0.2);
-}
-
-/* 搜索按钮样式 */
-.search-button {
-  border-radius: 8px;
-  font-weight: 500;
-  transition: var(--transition);
-}
-
-.search-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
-}
-
-/* 重置按钮样式 */
-.reset-button {
-  border-radius: 8px;
-  transition: var(--transition);
-}
-
-.reset-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-/* 操作按钮样式 */
-.action-button {
-  border-radius: 8px;
-  font-weight: 500;
-  transition: var(--transition);
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.action-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.action-button.primary:hover {
-  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
-}
-
-/* 动画延迟效果 */
-.fade-in {
-  animation: fadeIn 0.5s ease-in-out;
-}
-
-.fade-in:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.fade-in:nth-child(3) {
-  animation-delay: 0.2s;
-}
-
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .search-container {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  
-  .search-form {
-    width: 100%;
-  }
-  
-  .search-input {
-    width: 100%;
-  }
-  
-  .action-buttons {
-    justify-content: center;
-  }
-}
-</style>

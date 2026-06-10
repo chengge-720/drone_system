@@ -15,6 +15,8 @@ import './permission.js'
 import SvgIcon from '@/components/SvgIcon/index.vue'
 import 'virtual:svg-icons-register'
 import '@/assets/styles/all.css'
+import '@/assets/styles/uimaker-theme.css'
+import '@/assets/styles/admin-page.css'
 // 引入表格组件
 import VxeUIBase from 'vxe-pc-ui'
 import 'vxe-pc-ui/es/style.css'

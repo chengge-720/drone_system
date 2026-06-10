@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
@@ -32,6 +33,14 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
     private String pythonServiceUrl;
     
     private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate longRestTemplate;
+
+    public PathPlanningServiceImpl() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(15000);
+        factory.setReadTimeout(900000);
+        this.longRestTemplate = new RestTemplate(factory);
+    }
 
     // WGS84 近似半径（米）
     private static final double EARTH_RADIUS_M = 6378137.0;
@@ -40,13 +49,22 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
     public Map<String, Object> planPath(List<Double> startPoint, List<Double> endPoint,
                                         List<Map<String, Object>> obstacles, Integer gridSize, Boolean qOnly,
                                         Boolean stochasticInference, Double inferenceNoiseSigma,
-                                        Boolean disableAutoFallbackRetry, Integer missionId) {
+                                        Boolean disableAutoFallbackRetry, Integer missionId, String taskKey,
+                                        Boolean replayCachedPath) {
         try {
             final boolean requestedQOnly = qOnly != null && qOnly;
-            final boolean offlineMissionMode = missionId != null && missionId > 0 && requestedQOnly;
+            final boolean taskTrainedMode = taskKey != null && !taskKey.isBlank() && requestedQOnly;
+            final boolean offlineMissionMode = !taskTrainedMode && missionId != null && missionId > 0 && requestedQOnly;
+            final boolean useReplayCache = replayCachedPath != null
+                    ? replayCachedPath
+                    : (offlineMissionMode && requestedQOnly);
 
-            log.info("开始路径规划(RL) missionId={} qOnly={} offlineAligned={} 起点={} 终点={}",
-                    missionId, qOnly, offlineMissionMode, startPoint, endPoint);
+            if (useReplayCache && offlineMissionMode) {
+                return planPathFromReplayCache(missionId, startPoint, endPoint);
+            }
+
+            log.info("开始路径规划(RL) missionId={} taskKey={} qOnly={} offlineAligned={} taskTrained={} replay={} 起点={} 终点={}",
+                    missionId, taskKey, qOnly, offlineMissionMode, taskTrainedMode, useReplayCache, startPoint, endPoint);
 
             if (startPoint.size() < 2 || endPoint.size() < 2) {
                 Map<String, Object> errorResult = new HashMap<>();
@@ -63,9 +81,12 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             double goalLon = endPoint.get(1);
             double goalAlt = endPoint.size() >= 3 && endPoint.get(2) != null ? endPoint.get(2) : startAlt;
 
+            double[] taskGridSpec = taskTrainedMode ? resolveTaskGridSpec(taskKey) : null;
             GridTransform grid = buildGridTransform(
-                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt, gridSize, missionId, offlineMissionMode,
-                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt);
+                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt, gridSize, missionId,
+                    offlineMissionMode, taskTrainedMode, taskKey,
+                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt,
+                    taskGridSpec);
 
             double startX = grid.startX;
             double startY = grid.startY;
@@ -105,21 +126,28 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             final double inferGoalScale = stoch ? 1.20 : 1.05;
             final double sigma = stoch ? Math.max(0.15, sigmaInput) : sigmaInput;
             final double goalGuidance = stoch ? 0.25 : 0.0;
-            final int planTrials = stoch ? 12 : 1;
+            final int planTrials = stoch ? 12 : (taskTrainedMode && requestedQOnly ? 16 : 1);
             requestBody.put("infer_goal_scale", inferGoalScale);
             requestBody.put("stochastic_inference", stoch);
             requestBody.put("inference_noise_sigma", sigma);
             requestBody.put("goal_guidance_strength", goalGuidance);
             requestBody.put("plan_trials", planTrials);
             // 离线 mission+q_only：Java 已按 offline_train 口径算好网格，禁止 Python 再用 meta 覆盖尺度（避免起终点与栅格不一致）
-            requestBody.put("use_model_meta_scaling", !offlineMissionMode);
+            requestBody.put("use_model_meta_scaling", !offlineMissionMode && !taskTrainedMode);
             requestBody.put("q_only", requestedQOnly);
             if (offlineMissionMode) {
                 requestBody.put("offline_grid_aligned", true);
                 requestBody.put("obstacle_clearance_m", 45.0);
             }
-            if (missionId != null && missionId > 0) {
+            if (taskTrainedMode) {
+                requestBody.put("offline_grid_aligned", true);
+                requestBody.put("task_key", taskKey.trim());
+                requestBody.put("obstacle_clearance_m", 45.0);
+            }
+            if (missionId != null && missionId > 0 && offlineMissionMode) {
                 requestBody.put("mission_id", missionId);
+            } else if (missionId != null && missionId > 0) {
+                log.warn("忽略 missionId={}：在线混合推理不应绑定离线 Q 表（qOnly=false）", missionId);
             }
 
             // 与 Python 2.5D 栅格对齐：网格尺度、经纬度、50m 净空、立方体障碍（百度建筑等）
@@ -127,7 +155,7 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             requestBody.put("margin", margin);
             requestBody.put("xy_scale_m_per_grid", xyScaleMPerGrid);
             requestBody.put("z_scale_m_per_grid", zScaleMPerGrid);
-            if (offlineMissionMode && grid.trainingAnchorApplied) {
+            if ((offlineMissionMode || taskTrainedMode) && grid.trainingAnchorApplied) {
                 requestBody.put("user_start_lat", grid.userStartLat);
                 requestBody.put("user_start_lon", grid.userStartLon);
                 requestBody.put("user_start_alt", grid.userStartAlt);
@@ -143,7 +171,7 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             requestBody.put("goal_alt", goalAlt);
             requestBody.put("origin_lat", originLat);
             requestBody.put("origin_lon", originLon);
-            if (!offlineMissionMode) {
+            if (!offlineMissionMode && !taskTrainedMode) {
                 requestBody.put("obstacle_clearance_m", 50.0);
             }
             List<Map<String, Object>> pyCubes = buildPythonCubeObstacles(
@@ -153,8 +181,25 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
                 log.info("RL 下发立方体障碍 {} 个（可与 SHP 柱元栅格合并）", pyCubes.size());
             }
             if (offlineMissionMode) {
+                PathPlanningOfflineMission.Anchor anchor = PathPlanningOfflineMission.get(missionId);
+                if (anchor != null) {
+                    double anchorDist = anchorDistanceMeters(
+                            grid.userStartLat, grid.userStartLon, grid.userGoalLat, grid.userGoalLon, anchor);
+                    if (anchorDist > 5000.0) {
+                        Map<String, Object> errorResult = new HashMap<>();
+                        errorResult.put("success", false);
+                        errorResult.put("error", String.format(
+                                "起终点与 Mission %d（%s）训练锚点偏差 %.0f m，超过 5000 m，请重新训练 Q 表或更换任务",
+                                missionId, anchor.name, anchorDist));
+                        errorResult.put("missionId", missionId);
+                        errorResult.put("anchorDistanceM", anchorDist);
+                        return errorResult;
+                    }
+                }
                 log.info("离线Q表使用训练锚点 mission={} {}（用户起终点仅作对照，Python 侧将再次对齐）",
                         missionId, grid.missionName);
+            } else if (taskTrainedMode) {
+                log.info("任务 Q 表推理 taskKey={}（Python 侧按训练栅格对齐起终点）", taskKey);
             }
 
             // 设置请求头
@@ -201,21 +246,7 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
                 JSONObject data = jsonResponse.getJSONObject("data");
                 if (data != null) {
 
-                    // Python path: [[x,y,z], ...] -> 转回 [lat, lon, alt]
-                    List<List<Double>> pathLatLonAlt = new ArrayList<>();
-                    List<?> path = data.getList("path", Object.class);
-                    if (path != null) {
-                        for (Object p : path) {
-                            if (!(p instanceof List)) continue;
-                            @SuppressWarnings("unchecked")
-                            List<Object> xyz = (List<Object>) p;
-                            if (xyz.size() < 3) continue;
-                            double x = ((Number) xyz.get(0)).doubleValue();
-                            double y = ((Number) xyz.get(1)).doubleValue();
-                            double z = ((Number) xyz.get(2)).doubleValue();
-                            pathLatLonAlt.add(grid.latLonAltFromGrid(x, y, z));
-                        }
-                    }
+                    List<List<Double>> pathLatLonAlt = convertPythonPlanPathToLatLonAlt(data, grid);
 
                     double totalDistanceM = computePathDistanceMeters(pathLatLonAlt);
                     double avgSpeedMps = 10.0;
@@ -294,6 +325,39 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
                     putIfPresent(result, "plannerMode", data.getString("planner_mode"));
                     result.put("missionId", missionId);
                     result.put("offlineGridAligned", offlineMissionMode);
+                    result.put("coordinateSystem", "wgs84");
+                    result.put("pathWgs84", pathLatLonAlt);
+                    putIfPresent(result, "originLat", data.getDouble("origin_lat"));
+                    putIfPresent(result, "originLon", data.getDouble("origin_lon"));
+                    putIfPresent(result, "xyScaleMPerGrid", data.getDouble("xy_scale_m_per_grid"));
+                    putIfPresent(result, "zScaleMPerGrid", data.getDouble("z_scale_m_per_grid"));
+                    if (data.get("grid_n") != null) {
+                        result.put("gridN", data.getInteger("grid_n"));
+                    }
+                    if (data.get("grid_center") != null) {
+                        result.put("gridCenter", data.getDouble("grid_center"));
+                    }
+                    List<?> pathGridRaw = data.getList("path_grid", Object.class);
+                    if (pathGridRaw == null) {
+                        pathGridRaw = data.getList("path", Object.class);
+                    }
+                    if (pathGridRaw != null && !pathGridRaw.isEmpty()) {
+                        result.put("pathGrid", pathGridRaw);
+                    }
+                    Map<String, Object> gridMeta = new LinkedHashMap<>();
+                    putIfPresent(gridMeta, "originLat", data.getDouble("origin_lat"));
+                    putIfPresent(gridMeta, "originLon", data.getDouble("origin_lon"));
+                    putIfPresent(gridMeta, "xyScaleMPerGrid", data.getDouble("xy_scale_m_per_grid"));
+                    putIfPresent(gridMeta, "zScaleMPerGrid", data.getDouble("z_scale_m_per_grid"));
+                    if (data.get("grid_n") != null) {
+                        gridMeta.put("gridN", data.getInteger("grid_n"));
+                    }
+                    if (data.get("grid_center") != null) {
+                        gridMeta.put("gridCenter", data.getDouble("grid_center"));
+                    }
+                    if (!gridMeta.isEmpty()) {
+                        result.put("gridTransform", gridMeta);
+                    }
 
                     if (ok != null && ok) {
                         log.info("路径规划成功 - 距离: {}m, 预计时间: {}s", totalDistanceM, estimatedTimeS);
@@ -318,6 +382,268 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             Map<String, Object> errorResult = new HashMap<>();
             errorResult.put("success", false);
             errorResult.put("error", "路径规划异常: " + e.getMessage());
+            return errorResult;
+        }
+    }
+
+    /**
+     * 复现 offline_train 写入的 Mission RL 缓存路径（WGS84），不触发 Q 表在线推理。
+     */
+    private Map<String, Object> planPathFromReplayCache(
+            int missionId, List<Double> startPoint, List<Double> endPoint) {
+        Map<String, Object> errorResult = new HashMap<>();
+        try {
+            double userStartLat = startPoint.get(0);
+            double userStartLon = startPoint.get(1);
+            double userGoalLat = endPoint.get(0);
+            double userGoalLon = endPoint.get(1);
+
+            PathPlanningOfflineMission.Anchor anchor = PathPlanningOfflineMission.get(missionId);
+            if (anchor != null) {
+                double anchorDist = anchorDistanceMeters(
+                        userStartLat, userStartLon, userGoalLat, userGoalLon, anchor);
+                if (anchorDist > 5000.0) {
+                    errorResult.put("success", false);
+                    errorResult.put("error", String.format(
+                            "起终点与 Mission %d 训练锚点偏差 %.0f m，超过 5000 m，无法复现缓存路径",
+                            missionId, anchorDist));
+                    return errorResult;
+                }
+            }
+
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("mission_id", missionId);
+            requestBody.put("user_start_lat", userStartLat);
+            requestBody.put("user_start_lon", userStartLon);
+            requestBody.put("user_goal_lat", userGoalLat);
+            requestBody.put("user_goal_lon", userGoalLon);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+            String url = pythonServiceUrl + "/api/plan/replay";
+            log.info("RL 路径复现(replay cache) missionId={} url={}", missionId, url);
+
+            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
+            if (response.getStatusCode() != HttpStatus.OK || response.getBody() == null) {
+                errorResult.put("success", false);
+                errorResult.put("error", "复现缓存路径服务调用失败");
+                return errorResult;
+            }
+
+            JSONObject jsonResponse = JSON.parseObject(response.getBody());
+            Boolean ok = jsonResponse.getBoolean("success");
+            JSONObject data = jsonResponse.getJSONObject("data");
+            if (data == null) {
+                errorResult.put("success", false);
+                errorResult.put("error", jsonResponse.getString("error") != null
+                        ? jsonResponse.getString("error") : "Python 未返回路径数据");
+                return errorResult;
+            }
+
+            int gridN = data.getInteger("grid_n") != null ? data.getInteger("grid_n") : PathPlanningOfflineMission.OFFLINE_GRID_N;
+            int margin = data.getInteger("margin") != null ? data.getInteger("margin") : PathPlanningOfflineMission.OFFLINE_MARGIN;
+            double xyScale = data.getDouble("xy_scale_m_per_grid") != null
+                    ? data.getDouble("xy_scale_m_per_grid") : 8.0;
+            double zScale = data.getDouble("z_scale_m_per_grid") != null
+                    ? data.getDouble("z_scale_m_per_grid") : PathPlanningOfflineMission.OFFLINE_Z_SCALE;
+            double originLat = data.getDouble("origin_lat") != null ? data.getDouble("origin_lat") : 0.0;
+            double originLon = data.getDouble("origin_lon") != null ? data.getDouble("origin_lon") : 0.0;
+            double center = data.getDouble("grid_center") != null ? data.getDouble("grid_center") : gridN / 2.0;
+
+            GridTransform grid = new GridTransform(
+                    gridN, margin, xyScale, zScale,
+                    originLat, originLon, center, center,
+                    0, 0, 0, 0, 0, 0,
+                    true, missionId, anchor != null ? anchor.name : null,
+                    true, userStartLat, userStartLon, 0, userGoalLat, userGoalLon, 0,
+                    anchor != null ? anchor.startLat : userStartLat,
+                    anchor != null ? anchor.startLon : userStartLon,
+                    anchor != null ? anchor.startAlt : 0,
+                    anchor != null ? anchor.goalLat : userGoalLat,
+                    anchor != null ? anchor.goalLon : userGoalLon,
+                    anchor != null ? anchor.goalAlt : 0);
+
+            List<List<Double>> pathLatLonAlt = convertPythonPlanPathToLatLonAlt(data, grid);
+            double totalDistanceM = computePathDistanceMeters(pathLatLonAlt);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", Boolean.TRUE.equals(ok));
+            result.put("path", pathLatLonAlt);
+            result.put("totalDistance", totalDistanceM);
+            result.put("estimatedTime", totalDistanceM / 10.0);
+            result.put("algorithm", "Q-Learning-2.5D-Replay");
+            result.put("plannerMode", data.getString("planner_mode"));
+            result.put("rlSuccess", Boolean.TRUE.equals(data.getBoolean("success")));
+            result.put("qOnly", true);
+            result.put("replayCached", true);
+            putIfPresent(result, "mode", data.getString("mode"));
+            putIfPresent(result, "modeNote", data.getString("mode_note"));
+            result.put("missionId", missionId);
+            result.put("offlineGridAligned", true);
+            result.put("coordinateSystem", "wgs84");
+            result.put("pathWgs84", pathLatLonAlt);
+            putIfPresent(result, "originLat", originLat);
+            putIfPresent(result, "originLon", originLon);
+            putIfPresent(result, "xyScaleMPerGrid", xyScale);
+            putIfPresent(result, "zScaleMPerGrid", zScale);
+            result.put("gridN", gridN);
+            result.put("gridCenter", center);
+            List<?> pathGridRaw = data.getList("path_grid", Object.class);
+            if (pathGridRaw != null && !pathGridRaw.isEmpty()) {
+                result.put("pathGrid", pathGridRaw);
+            }
+            Map<String, Object> gridMeta = new LinkedHashMap<>();
+            gridMeta.put("originLat", originLat);
+            gridMeta.put("originLon", originLon);
+            gridMeta.put("xyScaleMPerGrid", xyScale);
+            gridMeta.put("zScaleMPerGrid", zScale);
+            gridMeta.put("gridN", gridN);
+            gridMeta.put("gridCenter", center);
+            result.put("gridTransform", gridMeta);
+            putIfPresent(result, "replayCacheFile", data.getString("replay_cache_file"));
+            putIfPresent(result, "cachedAt", data.getString("cached_at"));
+
+            if (!Boolean.TRUE.equals(ok)) {
+                result.put("error", jsonResponse.getString("error"));
+            }
+            log.info("RL 缓存路径复现 mission={} 点数={} 距离≈{}m", missionId, pathLatLonAlt.size(), Math.round(totalDistanceM));
+            return result;
+        } catch (HttpStatusCodeException e) {
+            log.error("复现缓存路径 HTTP 失败: {}", e.getResponseBodyAsString());
+            errorResult.put("success", false);
+            errorResult.put("error", "复现缓存路径失败: " + e.getResponseBodyAsString());
+            return errorResult;
+        } catch (Exception e) {
+            log.error("复现缓存路径异常", e);
+            errorResult.put("success", false);
+            errorResult.put("error", "复现缓存路径异常: " + e.getMessage());
+            return errorResult;
+        }
+    }
+
+    @Override
+    public Map<String, Object> planGridPath(List<Double> startPoint, List<Double> endPoint,
+                                            List<Map<String, Object>> obstacles, Integer gridSize,
+                                            Integer missionId, String taskKey, String algorithm) {
+        try {
+            final boolean taskTrainedMode = taskKey != null && !taskKey.isBlank();
+            final boolean offlineMissionMode = !taskTrainedMode && missionId != null && missionId > 0;
+            final String algo = algorithm == null ? "astar" : algorithm.trim().toLowerCase(Locale.ROOT);
+            final String endpoint = "ga".equals(algo) ? "/api/plan/ga" : "/api/plan/astar";
+
+            if (startPoint.size() < 2 || endPoint.size() < 2) {
+                Map<String, Object> errorResult = new HashMap<>();
+                errorResult.put("success", false);
+                errorResult.put("error", "起点/终点坐标格式错误，必须至少包含 [lat, lon, alt?]");
+                return errorResult;
+            }
+
+            double startLat = startPoint.get(0);
+            double startLon = startPoint.get(1);
+            double startAlt = startPoint.size() >= 3 && startPoint.get(2) != null ? startPoint.get(2) : 0.0;
+            double goalLat = endPoint.get(0);
+            double goalLon = endPoint.get(1);
+            double goalAlt = endPoint.size() >= 3 && endPoint.get(2) != null ? endPoint.get(2) : startAlt;
+
+            double[] taskGridSpec = taskTrainedMode ? resolveTaskGridSpec(taskKey) : null;
+            GridTransform grid = buildGridTransform(
+                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt, gridSize, missionId,
+                    offlineMissionMode, taskTrainedMode, taskKey,
+                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt,
+                    taskGridSpec);
+
+            if (grid.trainingAnchorApplied) {
+                startLat = grid.trainStartLat;
+                startLon = grid.trainStartLon;
+                startAlt = grid.trainStartAlt;
+                goalLat = grid.trainGoalLat;
+                goalLon = grid.trainGoalLon;
+                goalAlt = grid.trainGoalAlt;
+            }
+
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("start_position", Arrays.asList(grid.startX, grid.startY, grid.startZ));
+            requestBody.put("goal_position", Arrays.asList(grid.goalX, grid.goalY, grid.goalZ));
+            requestBody.put("use_model_meta_scaling", false);
+            requestBody.put("offline_grid_aligned", true);
+            requestBody.put("obstacle_clearance_m", 45.0);
+            if (taskTrainedMode) {
+                requestBody.put("task_key", taskKey.trim());
+            }
+            if (missionId != null && missionId > 0 && offlineMissionMode) {
+                requestBody.put("mission_id", missionId);
+            }
+            requestBody.put("grid_n", grid.gridN);
+            requestBody.put("margin", grid.margin);
+            requestBody.put("xy_scale_m_per_grid", grid.xyScaleMPerGrid);
+            requestBody.put("z_scale_m_per_grid", grid.zScaleMPerGrid);
+            requestBody.put("start_lat", startLat);
+            requestBody.put("start_lon", startLon);
+            requestBody.put("start_alt", startAlt);
+            requestBody.put("goal_lat", goalLat);
+            requestBody.put("goal_lon", goalLon);
+            requestBody.put("goal_alt", goalAlt);
+            requestBody.put("origin_lat", grid.originLat);
+            requestBody.put("origin_lon", grid.originLon);
+
+            List<Map<String, Object>> pyCubes = buildPythonCubeObstacles(
+                    obstacles, grid.originLat, grid.originLon, grid.originLatRad,
+                    grid.xyScaleMPerGrid, grid.zScaleMPerGrid, grid.centerX, grid.centerY, grid.gridN);
+            if (pyCubes != null && !pyCubes.isEmpty()) {
+                requestBody.put("obstacle_cubes", pyCubes);
+            }
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+            String url = pythonServiceUrl + endpoint;
+            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
+
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JSONObject jsonResponse = JSON.parseObject(response.getBody());
+                Map<String, Object> result = new HashMap<>();
+                Boolean ok = jsonResponse.getBoolean("success");
+                result.put("success", ok != null && ok);
+                JSONObject data = jsonResponse.getJSONObject("data");
+                if (data != null) {
+                    List<List<Double>> pathLatLonAlt = new ArrayList<>();
+                    List<?> path = data.getList("path", Object.class);
+                    if (path != null) {
+                        for (Object p : path) {
+                            if (!(p instanceof List)) continue;
+                            @SuppressWarnings("unchecked")
+                            List<Object> xyz = (List<Object>) p;
+                            if (xyz.size() < 3) continue;
+                            pathLatLonAlt.add(grid.latLonAltFromGrid(
+                                    ((Number) xyz.get(0)).doubleValue(),
+                                    ((Number) xyz.get(1)).doubleValue(),
+                                    ((Number) xyz.get(2)).doubleValue()));
+                        }
+                    }
+                    double totalDistanceM = computePathDistanceMeters(pathLatLonAlt);
+                    result.put("path", pathLatLonAlt);
+                    result.put("totalDistance", totalDistanceM);
+                    result.put("estimatedTime", totalDistanceM / 10.0);
+                    result.put("pointCount", pathLatLonAlt.size());
+                    putIfPresent(result, "algorithm", data.getString("algorithm"));
+                    result.put("pathGrid", path);
+                    result.put("gridTransform", grid.toTraceMap());
+                }
+                if (ok == null || !ok) {
+                    result.put("error", jsonResponse.getString("error"));
+                }
+                return result;
+            }
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("success", false);
+            errorResult.put("error", "栅格路径规划服务调用失败");
+            return errorResult;
+        } catch (Exception e) {
+            log.error("栅格路径规划异常 algorithm={}", algorithm, e);
+            Map<String, Object> errorResult = new HashMap<>();
+            errorResult.put("success", false);
+            errorResult.put("error", "栅格路径规划异常: " + e.getMessage());
             return errorResult;
         }
     }
@@ -371,7 +697,7 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
     }
 
     @Override
-    public Map<String, Object> getRlPlot(String name, Integer missionId) {
+    public Map<String, Object> getRlPlot(String name, Integer missionId, String taskKey) {
         Map<String, Object> result = new HashMap<>();
         result.put("success", false);
         try {
@@ -386,7 +712,9 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             String encodedName = UriUtils.encodeQueryParam(n, StandardCharsets.UTF_8);
             StringBuilder urlBuilder = new StringBuilder(pythonServiceUrl.replaceAll("/+$", ""))
                     .append("/api/plots?name=").append(encodedName);
-            if (missionId != null && missionId > 0) {
+            if (taskKey != null && !taskKey.isBlank()) {
+                urlBuilder.append("&task_key=").append(UriUtils.encodeQueryParam(taskKey.trim(), StandardCharsets.UTF_8));
+            } else if (missionId != null && missionId > 0) {
                 urlBuilder.append("&mission_id=").append(missionId);
             }
             if (n.equals("path_evolution")) {
@@ -424,6 +752,82 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             return result;
         } catch (Exception e) {
             result.put("error", "获取图表异常: " + e.getMessage());
+            return result;
+        }
+    }
+
+    @Override
+    public Map<String, Object> trainTaskModel(Map<String, Object> params) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", false);
+        try {
+            String url = pythonServiceUrl.replaceAll("/+$", "") + "/api/model/train-task";
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(params, headers);
+            ResponseEntity<String> response = longRestTemplate.postForEntity(url, entity, String.class);
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JSONObject json = JSON.parseObject(response.getBody());
+                boolean ok = Boolean.TRUE.equals(json.getBoolean("success"));
+                result.put("success", ok);
+                result.put("taskKey", json.getString("task_key"));
+                result.put("modelPath", json.getString("model_path"));
+                result.put("imagesDir", json.getString("images_dir"));
+                result.put("skipped", json.getBoolean("skipped"));
+                result.put("plotsRefreshed", json.getBoolean("plots_refreshed"));
+                result.put("stdout", json.getString("stdout"));
+                result.put("stderr", json.getString("stderr"));
+                if (!ok) {
+                    result.put("error", json.getString("error"));
+                }
+                return result;
+            }
+            result.put("error", "训练请求失败，HTTP: " + response.getStatusCode());
+            return result;
+        } catch (Exception e) {
+            log.error("任务 Q 表训练异常", e);
+            result.put("error", "任务 Q 表训练异常: " + e.getMessage());
+            return result;
+        }
+    }
+
+    @Override
+    public Map<String, Object> getTaskModelStatus(String taskKey) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", false);
+        try {
+            if (taskKey == null || taskKey.isBlank()) {
+                result.put("error", "taskKey 不能为空");
+                return result;
+            }
+            String encoded = UriUtils.encodeQueryParam(taskKey.trim(), StandardCharsets.UTF_8);
+            String url = pythonServiceUrl.replaceAll("/+$", "") + "/api/model/task-status?task_key=" + encoded;
+            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JSONObject json = JSON.parseObject(response.getBody());
+                result.put("success", Boolean.TRUE.equals(json.getBoolean("success")));
+                result.put("taskKey", json.getString("task_key"));
+                result.put("trained", json.getBoolean("trained"));
+                result.put("hasTrainingCurves", json.getBoolean("has_training_curves"));
+                result.put("hasTrainingProgress", json.getBoolean("has_training_progress"));
+                result.put("modelPath", json.getString("model_path"));
+                result.put("imagesDir", json.getString("images_dir"));
+                result.put("plots", json.getJSONArray("plots"));
+                result.put("modelMtime", json.get("model_mtime"));
+                result.put("gridN", json.get("grid_n"));
+                result.put("zScaleMPerGrid", json.get("z_scale_m_per_grid"));
+                result.put("requestedCruiseAltM", json.get("requested_cruise_alt_m"));
+                result.put("effectiveCruiseAltM", json.get("effective_cruise_alt_m"));
+                result.put("startAltM", json.get("start_alt_m"));
+                if (!Boolean.TRUE.equals(result.get("success"))) {
+                    result.put("error", json.getString("error"));
+                }
+                return result;
+            }
+            result.put("error", "查询失败，HTTP: " + response.getStatusCode());
+            return result;
+        } catch (Exception e) {
+            result.put("error", "查询任务模型状态异常: " + e.getMessage());
             return result;
         }
     }
@@ -509,8 +913,10 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             final boolean offlineMissionMode = missionId != null && missionId > 0 && requestedQOnly;
 
             GridTransform grid = buildGridTransform(
-                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt, null, missionId, offlineMissionMode,
-                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt);
+                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt, null, missionId,
+                    offlineMissionMode, false, null,
+                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt,
+                    null);
             int gridN = grid.gridN;
             int margin = grid.margin;
             double xyScaleMPerGrid = grid.xyScaleMPerGrid;
@@ -549,7 +955,7 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             requestBody.put("goal_guidance_strength", goalGuidance);
             requestBody.put("use_model_meta_scaling", !offlineMissionMode);
             requestBody.put("q_only", requestedQOnly);
-            if (missionId != null && missionId > 0) {
+            if (missionId != null && missionId > 0 && offlineMissionMode) {
                 requestBody.put("mission_id", missionId);
             }
             if (offlineMissionMode) {
@@ -630,6 +1036,10 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
                     missionId = 0;
                 }
             }
+            String taskKey = params.get("taskKey") != null ? String.valueOf(params.get("taskKey")).trim() : null;
+            if (taskKey != null && taskKey.isBlank()) {
+                taskKey = null;
+            }
             Object rawPath = params.get("path");
             if (!(rawPath instanceof List<?>)) {
                 result.put("error", "path 必须是数组");
@@ -663,6 +1073,49 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
                 return result;
             }
 
+            List<List<Double>> pathGrid = null;
+            Map<String, Object> gridTransformMeta = null;
+            if (missionId > 0) {
+                PathPlanningOfflineMission.Anchor anchor = PathPlanningOfflineMission.get(missionId);
+                if (anchor != null) {
+                    GridTransform grid = buildGridTransform(
+                            anchor.startLat, anchor.startLon, anchor.startAlt,
+                            anchor.goalLat, anchor.goalLon, anchor.goalAlt,
+                            PathPlanningOfflineMission.OFFLINE_GRID_N, missionId, true, false, null,
+                            anchor.startLat, anchor.startLon, anchor.startAlt,
+                            anchor.goalLat, anchor.goalLon, anchor.goalAlt,
+                            null);
+                    pathGrid = new ArrayList<>();
+                    for (List<Double> geo : normalizedPath) {
+                        pathGrid.add(grid.gridFromLatLonAlt(geo.get(0), geo.get(1), geo.get(2)));
+                    }
+                    gridTransformMeta = grid.toTraceMap();
+                }
+            }
+            if (taskKey != null && pathGrid == null) {
+                List<Double> sp = toDoublePointList(params.get("startPoint"));
+                List<Double> ep = toDoublePointList(params.get("endPoint"));
+                if (sp != null && ep != null && sp.size() >= 2 && ep.size() >= 2) {
+                    double startLat = sp.get(0);
+                    double startLon = sp.get(1);
+                    double startAlt = sp.size() >= 3 ? sp.get(2) : 100.0;
+                    double goalLat = ep.get(0);
+                    double goalLon = ep.get(1);
+                    double goalAlt = ep.size() >= 3 ? ep.get(2) : startAlt;
+                    double[] taskGridSpec = resolveTaskGridSpec(taskKey);
+                    GridTransform grid = buildGridTransform(
+                            startLat, startLon, startAlt, goalLat, goalLon, goalAlt,
+                            null, null, false, true, taskKey,
+                            startLat, startLon, startAlt, goalLat, goalLon, goalAlt,
+                            taskGridSpec);
+                    pathGrid = new ArrayList<>();
+                    for (List<Double> geo : normalizedPath) {
+                        pathGrid.add(grid.gridFromLatLonAlt(geo.get(0), geo.get(1), geo.get(2)));
+                    }
+                    gridTransformMeta = grid.toTraceMap();
+                }
+            }
+
             Path outPath = Paths.get(System.getProperty("user.dir"), "python_service", "images", fileName);
             Files.createDirectories(outPath.getParent());
 
@@ -687,11 +1140,39 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
                 JSONObject missionDoc = new JSONObject();
                 missionDoc.put("algorithm", algorithm);
                 missionDoc.put("path", normalizedPath);
+                missionDoc.put("coordinate_system", "wgs84");
+                if (pathGrid != null && !pathGrid.isEmpty()) {
+                    missionDoc.put("path_grid", pathGrid);
+                    if (gridTransformMeta != null) {
+                        missionDoc.put("grid_transform", gridTransformMeta);
+                    }
+                }
                 missionDoc.put("updated_at", new Date().toString());
                 missions.put(String.valueOf(missionId), missionDoc);
             }
+            if (taskKey != null) {
+                JSONObject missionDoc = new JSONObject();
+                missionDoc.put("algorithm", algorithm);
+                missionDoc.put("path", normalizedPath);
+                missionDoc.put("coordinate_system", "wgs84");
+                if (pathGrid != null && !pathGrid.isEmpty()) {
+                    missionDoc.put("path_grid", pathGrid);
+                    if (gridTransformMeta != null) {
+                        missionDoc.put("grid_transform", gridTransformMeta);
+                    }
+                }
+                missionDoc.put("updated_at", new Date().toString());
+                missions.put(taskKey, missionDoc);
+            }
             root.put("algorithm", algorithm);
             root.put("path", normalizedPath);
+            root.put("coordinate_system", "wgs84");
+            if (pathGrid != null && !pathGrid.isEmpty()) {
+                root.put("path_grid", pathGrid);
+                if (gridTransformMeta != null) {
+                    root.put("grid_transform", gridTransformMeta);
+                }
+            }
             root.put("updated_at", new Date().toString());
 
             Files.writeString(outPath, JSON.toJSONString(root, JSONWriter.Feature.PrettyFormat), StandardCharsets.UTF_8);
@@ -699,13 +1180,123 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             result.put("file", outPath.toString());
             result.put("algorithm", algorithm);
             result.put("missionId", missionId > 0 ? missionId : null);
+            result.put("taskKey", taskKey);
             result.put("pathPoints", normalizedPath.size());
+            result.put("pathGridPoints", pathGrid != null ? pathGrid.size() : 0);
             return result;
         } catch (Exception e) {
             log.error("保存 Java 侧算法路径失败", e);
             result.put("error", "保存失败: " + e.getMessage());
             return result;
         }
+    }
+
+    @Override
+    public Map<String, Object> regenerateRlComparisonPlots(Map<String, Object> params) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", false);
+        try {
+            int missionId = 0;
+            Object missionObj = params.get("missionId");
+            if (missionObj instanceof Number) {
+                missionId = ((Number) missionObj).intValue();
+            } else if (missionObj != null) {
+                try {
+                    missionId = Integer.parseInt(String.valueOf(missionObj));
+                } catch (Exception ignored) {
+                    missionId = 0;
+                }
+            }
+            if (missionId <= 0) {
+                result.put("error", "missionId 必须大于 0");
+                return result;
+            }
+            String url = pythonServiceUrl.replaceAll("/+$", "") + "/api/model/regenerate-plots";
+            Map<String, Object> body = new HashMap<>();
+            body.put("mission_id", missionId);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JSONObject json = JSON.parseObject(response.getBody());
+                boolean ok = Boolean.TRUE.equals(json.getBoolean("success"));
+                result.put("success", ok);
+                if (ok) {
+                    result.put("missionId", missionId);
+                    result.put("message", "对比图已重新生成");
+                } else {
+                    result.put("error", json.getString("error"));
+                    result.put("stderr", json.getString("stderr"));
+                }
+                return result;
+            }
+            result.put("error", "重新生成对比图失败，HTTP: " + response.getStatusCode());
+            return result;
+        } catch (HttpStatusCodeException e) {
+            String body = e.getResponseBodyAsString();
+            try {
+                JSONObject json = JSON.parseObject(body);
+                String msg = json.getString("error");
+                result.put("error", (msg != null && !msg.isBlank()) ? msg : ("重新生成对比图失败，HTTP: " + e.getStatusCode()));
+            } catch (Exception ignored) {
+                result.put("error", "重新生成对比图失败，HTTP: " + e.getStatusCode());
+            }
+            return result;
+        } catch (Exception e) {
+            log.error("重新生成 RL 对比图异常", e);
+            result.put("error", "重新生成对比图异常: " + e.getMessage());
+            return result;
+        }
+    }
+
+    @Override
+    public Map<String, Object> regenerateTaskRlPlots(Map<String, Object> params) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", false);
+        try {
+            String taskKey = params.get("taskKey") != null ? String.valueOf(params.get("taskKey")).trim() : null;
+            if (taskKey == null || taskKey.isBlank()) {
+                result.put("error", "taskKey 不能为空");
+                return result;
+            }
+            String url = pythonServiceUrl.replaceAll("/+$", "") + "/api/model/regenerate-task-plots";
+            Map<String, Object> body = new HashMap<>();
+            body.put("task_key", taskKey);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+            ResponseEntity<String> response = longRestTemplate.postForEntity(url, entity, String.class);
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                JSONObject json = JSON.parseObject(response.getBody());
+                boolean ok = Boolean.TRUE.equals(json.getBoolean("success"));
+                result.put("success", ok);
+                result.put("taskKey", json.getString("task_key"));
+                result.put("imagesDir", json.getString("images_dir"));
+                result.put("plots", json.getJSONArray("plots"));
+                if (ok) {
+                    result.put("message", "任务算法对比图已重新生成");
+                } else {
+                    result.put("error", json.getString("error"));
+                    result.put("stderr", json.getString("stderr"));
+                }
+                return result;
+            }
+            result.put("error", "重新生成任务对比图失败，HTTP: " + response.getStatusCode());
+            return result;
+        } catch (Exception e) {
+            log.error("重新生成任务 RL 对比图异常", e);
+            result.put("error", "重新生成任务对比图异常: " + e.getMessage());
+            return result;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Double> toDoublePointList(Object raw) {
+        if (!(raw instanceof List<?> list) || list.size() < 2) {
+            return null;
+        }
+        return toDoubleListRaw((List<Object>) list);
     }
 
     private static List<Double> toDoubleListRaw(List<Object> raw) {
@@ -729,6 +1320,12 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
 
     private static void putIfPresent(Map<String, Object> map, String key, String value) {
         if (value != null && !value.isEmpty()) {
+            map.put(key, value);
+        }
+    }
+
+    private static void putIfPresent(Map<String, Object> map, String key, Number value) {
+        if (value != null) {
             map.put(key, value);
         }
     }
@@ -851,12 +1448,70 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
         return x != null ? x : def;
     }
 
+    private double[] resolveTaskGridSpec(String taskKey) {
+        if (taskKey == null || taskKey.isBlank()) {
+            return null;
+        }
+        Map<String, Object> status = getTaskModelStatus(taskKey.trim());
+        if (!Boolean.TRUE.equals(status.get("success"))) {
+            return null;
+        }
+        int gridN = PathPlanningOfflineMission.OFFLINE_GRID_N;
+        double zScale = PathPlanningOfflineMission.OFFLINE_Z_SCALE;
+        Object gnObj = status.get("gridN");
+        Object zsObj = status.get("zScaleMPerGrid");
+        if (gnObj instanceof Number) {
+            gridN = Math.max(10, ((Number) gnObj).intValue());
+        }
+        if (zsObj instanceof Number) {
+            zScale = Math.max(0.5, ((Number) zsObj).doubleValue());
+        }
+        return new double[]{gridN, zScale};
+    }
+
     private static GridTransform buildGridTransform(
             double startLat, double startLon, double startAlt,
             double goalLat, double goalLon, double goalAlt,
-            Integer gridSize, Integer missionId, boolean offlineMissionMode,
+            Integer gridSize, Integer missionId, boolean offlineMissionMode, boolean taskTrainedMode, String taskKey,
             double userStartLat, double userStartLon, double userStartAlt,
-            double userGoalLat, double userGoalLon, double userGoalAlt) {
+            double userGoalLat, double userGoalLon, double userGoalAlt,
+            double[] taskGridSpec) {
+        if (taskTrainedMode) {
+            int gridN = PathPlanningOfflineMission.OFFLINE_GRID_N;
+            double zScale = PathPlanningOfflineMission.OFFLINE_Z_SCALE;
+            if (taskGridSpec != null && taskGridSpec.length >= 2) {
+                gridN = Math.max(10, (int) Math.round(taskGridSpec[0]));
+                zScale = Math.max(0.5, taskGridSpec[1]);
+            }
+            int margin = PathPlanningOfflineMission.OFFLINE_MARGIN;
+            double originLat = (startLat + goalLat) / 2.0;
+            double originLon = (startLon + goalLon) / 2.0;
+            double centerX = gridN / 2.0;
+            double centerY = gridN / 2.0;
+
+            double[] goalDelta = geoDeltaMeters(goalLat, goalLon, originLat, originLon);
+            double halfUsable = Math.max(2.0, (gridN / 2.0) - margin - 2.0);
+            double requiredScale = Math.max(Math.abs(goalDelta[0]), Math.abs(goalDelta[1]));
+            requiredScale = Math.max(requiredScale, 260.0) / halfUsable;
+            double xyScale = Math.max(8.0, requiredScale * 1.12);
+
+            double[] startDelta = geoDeltaMeters(startLat, startLon, originLat, originLon);
+            double startX = clamp(centerX + startDelta[0] / xyScale, 0, gridN - 1);
+            double startY = clamp(centerY + startDelta[1] / xyScale, 0, gridN - 1);
+            double startZ = clamp(startAlt / zScale, 0, gridN - 1);
+            double goalX = clamp(centerX + goalDelta[0] / xyScale, 0, gridN - 1);
+            double goalY = clamp(centerY + goalDelta[1] / xyScale, 0, gridN - 1);
+            double goalZ = clamp(goalAlt / zScale, 0, gridN - 1);
+
+            String label = (taskKey != null && !taskKey.isBlank()) ? ("task:" + taskKey.trim()) : "task-trained";
+            return new GridTransform(
+                    gridN, margin, xyScale, zScale,
+                    originLat, originLon, centerX, centerY,
+                    startX, startY, startZ, goalX, goalY, goalZ,
+                    true, missionId, label,
+                    true, userStartLat, userStartLon, userStartAlt, userGoalLat, userGoalLon, userGoalAlt,
+                    startLat, startLon, startAlt, goalLat, goalLon, goalAlt);
+        }
         if (offlineMissionMode) {
             PathPlanningOfflineMission.Anchor anchor = missionId != null
                     ? PathPlanningOfflineMission.get(missionId) : null;
@@ -957,6 +1612,112 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
         return new double[]{dxM, dyM};
     }
 
+    /** 用户起终点与 offline_train 锚点的综合距离（米，含起终点对调） */
+    private static double anchorDistanceMeters(
+            double userStartLat, double userStartLon,
+            double userGoalLat, double userGoalLon,
+            PathPlanningOfflineMission.Anchor anchor) {
+        double dForward =
+                haversineMeters(userStartLat, userStartLon, anchor.startLat, anchor.startLon)
+                        + haversineMeters(userGoalLat, userGoalLon, anchor.goalLat, anchor.goalLon);
+        double dReverse =
+                haversineMeters(userStartLat, userStartLon, anchor.goalLat, anchor.goalLon)
+                        + haversineMeters(userGoalLat, userGoalLon, anchor.startLat, anchor.startLon);
+        return Math.min(dForward, dReverse);
+    }
+
+    private static double haversineMeters(double lat1, double lon1, double lat2, double lon2) {
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLon = Math.toRadians(lon2 - lon1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1)) * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        return EARTH_RADIUS_M * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    /** Python /api/plan 返回 path_wgs84 时优先使用；否则识别 geo / grid 并转换 */
+    private static List<List<Double>> convertPythonPlanPathToLatLonAlt(JSONObject data, GridTransform grid) {
+        List<?> pathWgs84 = data.getList("path_wgs84", Object.class);
+        if (pathWgs84 != null && !pathWgs84.isEmpty()) {
+            return parsePathTripleList(pathWgs84);
+        }
+
+        List<?> path = data.getList("path", Object.class);
+        if (path == null || path.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        int gridN = data.getInteger("grid_n") != null ? data.getInteger("grid_n") : grid.gridN;
+        if (isGeoPath(path, gridN)) {
+            return parsePathTripleList(path);
+        }
+
+        double originLat = data.getDouble("origin_lat") != null ? data.getDouble("origin_lat") : grid.originLat;
+        double originLon = data.getDouble("origin_lon") != null ? data.getDouble("origin_lon") : grid.originLon;
+        double centerX = data.getDouble("grid_center") != null ? data.getDouble("grid_center") : grid.centerX;
+        double centerY = centerX;
+        double xyScale = data.getDouble("xy_scale_m_per_grid") != null
+                ? data.getDouble("xy_scale_m_per_grid") : grid.xyScaleMPerGrid;
+        double zScale = data.getDouble("z_scale_m_per_grid") != null
+                ? data.getDouble("z_scale_m_per_grid") : grid.zScaleMPerGrid;
+        double originLatRad = Math.toRadians(originLat);
+
+        List<List<Double>> pathLatLonAlt = new ArrayList<>();
+        for (Object p : path) {
+            if (!(p instanceof List)) continue;
+            @SuppressWarnings("unchecked")
+            List<Object> xyz = (List<Object>) p;
+            if (xyz.size() < 3) continue;
+            double x = ((Number) xyz.get(0)).doubleValue();
+            double y = ((Number) xyz.get(1)).doubleValue();
+            double z = ((Number) xyz.get(2)).doubleValue();
+            double dx = (x - centerX) * xyScale;
+            double dy = (y - centerY) * xyScale;
+            double lat = originLat + Math.toDegrees(dy / EARTH_RADIUS_M);
+            double lon = originLon + Math.toDegrees(dx / (EARTH_RADIUS_M * Math.cos(originLatRad)));
+            double alt = z * zScale;
+            pathLatLonAlt.add(Arrays.asList(lat, lon, alt));
+        }
+        return pathLatLonAlt;
+    }
+
+    private static List<List<Double>> parsePathTripleList(List<?> path) {
+        List<List<Double>> out = new ArrayList<>();
+        for (Object p : path) {
+            if (!(p instanceof List)) continue;
+            @SuppressWarnings("unchecked")
+            List<Object> arr = (List<Object>) p;
+            if (arr.size() < 2) continue;
+            double lat = ((Number) arr.get(0)).doubleValue();
+            double lon = ((Number) arr.get(1)).doubleValue();
+            double alt = arr.size() >= 3 ? ((Number) arr.get(2)).doubleValue() : 0.0;
+            out.add(Arrays.asList(lat, lon, alt));
+        }
+        return out;
+    }
+
+    private static boolean looksLikeGeoCoord(double a, double b, int gridN) {
+        if (3.0 <= a && a <= 54.5 && 70.0 <= b && b <= 136.0) {
+            return true;
+        }
+        return Math.abs(b) > 70.0 && Math.abs(a) <= gridN + 5.0;
+    }
+
+    private static boolean isGeoPath(List<?> path, int gridN) {
+        if (path == null || path.isEmpty()) return false;
+        int hits = 0;
+        for (Object p : path) {
+            if (!(p instanceof List)) continue;
+            @SuppressWarnings("unchecked")
+            List<Object> arr = (List<Object>) p;
+            if (arr.size() < 2) continue;
+            if (looksLikeGeoCoord(((Number) arr.get(0)).doubleValue(), ((Number) arr.get(1)).doubleValue(), gridN)) {
+                hits++;
+            }
+        }
+        return hits >= Math.max(1, path.size() / 3);
+    }
+
     private static final class GridTransform {
         final int gridN;
         final int margin;
@@ -1040,6 +1801,14 @@ public class PathPlanningServiceImpl implements IPathPlanningService {
             double lat = originLat + Math.toDegrees(dy / EARTH_RADIUS_M);
             double lon = originLon + Math.toDegrees(dx / (EARTH_RADIUS_M * Math.cos(originLatRad)));
             return Arrays.asList(lat, lon, alt);
+        }
+
+        List<Double> gridFromLatLonAlt(double lat, double lon, double alt) {
+            double[] delta = geoDeltaMeters(lat, lon, originLat, originLon);
+            double x = clamp(centerX + delta[0] / xyScaleMPerGrid, 0, gridN - 1);
+            double y = clamp(centerY + delta[1] / xyScaleMPerGrid, 0, gridN - 1);
+            double z = clamp(alt / zScaleMPerGrid, 0, gridN - 1);
+            return Arrays.asList(x, y, z);
         }
 
         Map<String, Object> toTraceMap() {

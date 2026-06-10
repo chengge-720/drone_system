@@ -30,7 +30,7 @@ public class ResourcesConfig implements WebMvcConfigurer {
 
     /**
      * 跨域配置源，配置哪些“外部”网站可以访问我们的后端API,前端属于“外部”网站
-     * 后端端口为8080
+     * 后端端口为8081
      */
     @Bean//告诉Spring把方法返回的对象放置到容器里进行管理
     public CorsConfigurationSource corsConfigurationSource(){

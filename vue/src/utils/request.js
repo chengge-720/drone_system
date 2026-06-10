@@ -15,7 +15,7 @@ axios.defaults.headers['Content-Type'] = 'application/json;charset=utf-8'
 //创建axios实例
 const service = axios.create({
     baseURL: import.meta.env.VITE_APP_BASE_API,//服务器地址
-    timeout: 20000,//超时时间就认为请求失败
+    timeout: 30000,// 常规接口超时（路径规划等长任务在 api 里单独设 180s）
 })
 
 //重新登录的函数
@@ -99,12 +99,9 @@ service.interceptors.response.use(
             //直接返回数据
             return res.data
         }
-        // 开发环境再打印完整响应，避免控制台被刷屏（生产/日常调试更清爽）
-        if (import.meta.env.DEV) {
-          console.log('完整响应:', res)
-          console.log('响应数据:', res.data)
-          console.log('响应状态码:', res.status)
-          console.log('响应头:', res.headers)
+        // 开发环境仅在有异常状态码时打印，避免控制台刷屏导致页面卡顿
+        if (import.meta.env.DEV && (res.status >= 400 || (res.data?.code && res.data.code !== 200))) {
+          console.warn('[API]', res.config?.method, res.config?.url, res.status, res.data)
         }
 
         // 确保code是数字类型
@@ -117,11 +114,6 @@ service.interceptors.response.use(
             msg = res.data.msg || '操作失败'
         }
         
-        if (import.meta.env.DEV) {
-          console.log('解析的状态码:', code)
-          console.log('解析的错误信息:', msg)
-        }
-
         //根据不同状态码处理
         if(code === 401){
             ElMessage.error(msg)

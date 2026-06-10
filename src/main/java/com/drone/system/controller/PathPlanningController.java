@@ -62,10 +62,15 @@ public class PathPlanningController extends BaseController {
                 Boolean.valueOf(String.valueOf(params.get("disableAutoFallbackRetry"))) : null;
             Integer missionId = params.get("missionId") != null ?
                 ((Number) params.get("missionId")).intValue() : null;
+            String taskKey = params.get("taskKey") != null ?
+                String.valueOf(params.get("taskKey")).trim() : null;
+            Boolean replayCachedPath = params.get("replayCachedPath") != null ?
+                Boolean.valueOf(String.valueOf(params.get("replayCachedPath"))) : null;
 
             // 调用路径规划服务
             Map<String, Object> result = pathPlanningService.planPath(
-                startPoint, endPoint, obstacles, gridSize, qOnly, stochasticInference, inferenceNoiseSigma, disableAutoFallbackRetry, missionId
+                startPoint, endPoint, obstacles, gridSize, qOnly, stochasticInference, inferenceNoiseSigma,
+                disableAutoFallbackRetry, missionId, taskKey, replayCachedPath
             );
             
             boolean ok = Boolean.TRUE.equals(result.get("success"));
@@ -79,6 +84,49 @@ public class PathPlanningController extends BaseController {
         } catch (Exception e) {
             log.error("路径规划失败", e);
             return error("路径规划失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Python 2.5D 栅格 A* / GA 路径规划（与 RL 同建筑 SHP 环境）
+     */
+    @PostMapping("/plan-grid")
+    public AjaxResult planGridPath(@RequestBody Map<String, Object> params) {
+        try {
+            @SuppressWarnings("unchecked")
+            List<Object> startPointRaw = (List<Object>) params.get("startPoint");
+            @SuppressWarnings("unchecked")
+            List<Object> endPointRaw = (List<Object>) params.get("endPoint");
+            if (startPointRaw == null || endPointRaw == null) {
+                return error("缺少必需参数: startPoint 和 endPoint");
+            }
+            List<Double> startPoint = toDoubleList(startPointRaw);
+            List<Double> endPoint = toDoubleList(endPointRaw);
+            if (startPoint.size() < 2 || endPoint.size() < 2) {
+                return error("startPoint/endPoint 格式错误");
+            }
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> obstacles = (List<Map<String, Object>>) params.get("obstacles");
+            Integer gridSize = params.get("gridSize") != null ?
+                    ((Number) params.get("gridSize")).intValue() : null;
+            Integer missionId = params.get("missionId") != null ?
+                    ((Number) params.get("missionId")).intValue() : null;
+            String taskKey = params.get("taskKey") != null ?
+                    String.valueOf(params.get("taskKey")).trim() : null;
+            String algorithm = params.get("algorithm") != null ?
+                    String.valueOf(params.get("algorithm")) : "astar";
+
+            Map<String, Object> result = pathPlanningService.planGridPath(
+                    startPoint, endPoint, obstacles, gridSize, missionId, taskKey, algorithm);
+            boolean ok = Boolean.TRUE.equals(result.get("success"));
+            boolean hasPath = result.get("path") instanceof List<?> && !((List<?>) result.get("path")).isEmpty();
+            if (ok || hasPath) {
+                return success(result);
+            }
+            return error(String.valueOf(result.getOrDefault("error", "栅格路径规划失败")));
+        } catch (Exception e) {
+            log.error("栅格路径规划失败", e);
+            return error("栅格路径规划失败: " + e.getMessage());
         }
     }
 
@@ -152,9 +200,10 @@ public class PathPlanningController extends BaseController {
     @GetMapping("/rl/plot")
     public AjaxResult getRlPlot(
             @RequestParam(value = "name", required = false) String name,
-            @RequestParam(value = "missionId", required = false) Integer missionId) {
+            @RequestParam(value = "missionId", required = false) Integer missionId,
+            @RequestParam(value = "taskKey", required = false) String taskKey) {
         try {
-            Map<String, Object> result = pathPlanningService.getRlPlot(name, missionId);
+            Map<String, Object> result = pathPlanningService.getRlPlot(name, missionId, taskKey);
             if (Boolean.TRUE.equals(result.get("success"))) {
                 return success(result);
             }
@@ -213,6 +262,34 @@ public class PathPlanningController extends BaseController {
         }
     }
 
+    @PostMapping("/regenerate-rl-plots")
+    public AjaxResult regenerateRlPlots(@RequestBody Map<String, Object> params) {
+        try {
+            Map<String, Object> result = pathPlanningService.regenerateRlComparisonPlots(params);
+            if (Boolean.TRUE.equals(result.get("success"))) {
+                return success(result);
+            }
+            return error(result.get("error") != null ? result.get("error").toString() : "重新生成对比图失败");
+        } catch (Exception e) {
+            log.error("重新生成对比图失败", e);
+            return error("重新生成对比图失败: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/regenerate-task-plots")
+    public AjaxResult regenerateTaskRlPlots(@RequestBody Map<String, Object> params) {
+        try {
+            Map<String, Object> result = pathPlanningService.regenerateTaskRlPlots(params);
+            if (Boolean.TRUE.equals(result.get("success"))) {
+                return success(result);
+            }
+            return error(result.get("error") != null ? result.get("error").toString() : "重新生成任务对比图失败");
+        } catch (Exception e) {
+            log.error("重新生成任务对比图失败", e);
+            return error("重新生成任务对比图失败: " + e.getMessage());
+        }
+    }
+
     @PostMapping("/final-path-package")
     public AjaxResult finalPathPackage(@RequestBody Map<String, Object> params) {
         try {
@@ -221,6 +298,34 @@ public class PathPlanningController extends BaseController {
         } catch (Exception e) {
             log.error("最终路径信息包写入失败", e);
             return error("最终路径信息包写入失败: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/train-task")
+    public AjaxResult trainTaskModel(@RequestBody Map<String, Object> params) {
+        try {
+            Map<String, Object> result = pathPlanningService.trainTaskModel(params);
+            if (Boolean.TRUE.equals(result.get("success"))) {
+                return success(result);
+            }
+            return error(result.get("error") != null ? result.get("error").toString() : "任务 Q 表训练失败");
+        } catch (Exception e) {
+            log.error("任务 Q 表训练失败", e);
+            return error("任务 Q 表训练失败: " + e.getMessage());
+        }
+    }
+
+    @GetMapping("/task-model-status")
+    public AjaxResult getTaskModelStatus(@RequestParam("taskKey") String taskKey) {
+        try {
+            Map<String, Object> result = pathPlanningService.getTaskModelStatus(taskKey);
+            if (Boolean.TRUE.equals(result.get("success"))) {
+                return success(result);
+            }
+            return error(result.get("error") != null ? result.get("error").toString() : "查询任务模型状态失败");
+        } catch (Exception e) {
+            log.error("查询任务模型状态失败", e);
+            return error("查询任务模型状态失败: " + e.getMessage());
         }
     }
 }

@@ -5,6 +5,20 @@ import {constantRouters} from "@/router/index.js";
 // 预扫描所有视图；勿用 import(`@/views/${path}.vue`)，Vite 要求变量仅代表「一层」文件名
 const viewModules = import.meta.glob('@/views/**/*.vue')
 
+/** 常用页走静态 import，避免 glob 键名在 Windows / HMR 下偶发拉取失败 */
+const directImportViews = {
+  'system/index': () => import('@/views/system/index.vue'),
+  'uavNavigation/pathPlanning/index': () => import('@/views/uavNavigation/pathPlanning/index.vue'),
+  'aiAssistant/index': () => import('@/views/aiAssistant/index.vue'),
+}
+
+const viewModuleByKey = Object.create(null)
+for (const p in viewModules) {
+  const normalized = p.replace(/\\/g, '/')
+  const m = normalized.match(/\/views\/(.+?)\.vue$/i)
+  if (m) viewModuleByKey[m[1]] = viewModules[p]
+}
+
 //导入布局组件
 import Layout from '@/views/layout/index.vue'
 import ParentView from '@/views/ParentView.vue'
@@ -157,13 +171,13 @@ const loadView = (view) => {
     }
   }
 
-  for (const p in viewModules) {
-    const normalized = p.replace(/\\/g, '/')
-    const m = normalized.match(/\/views\/(.+?)\.vue$/i)
-    if (!m) continue
-    if (m[1] === target) {
-      return withRetry(viewModules[p])
-    }
+  if (directImportViews[target]) {
+    return withRetry(directImportViews[target])
+  }
+
+  const loader = viewModuleByKey[target]
+  if (loader) {
+    return withRetry(loader)
   }
 
   console.error('[routeStore] 未找到视图文件，请核对路径是否在 src/views 下:', view, '=>', target)

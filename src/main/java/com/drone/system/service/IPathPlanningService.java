@@ -19,7 +19,16 @@ public interface IPathPlanningService {
     Map<String, Object> planPath(List<Double> startPoint, List<Double> endPoint,
                                   List<Map<String, Object>> obstacles, Integer gridSize, Boolean qOnly,
                                   Boolean stochasticInference, Double inferenceNoiseSigma,
-                                  Boolean disableAutoFallbackRetry, Integer missionId);
+                                  Boolean disableAutoFallbackRetry, Integer missionId, String taskKey,
+                                  Boolean replayCachedPath);
+
+    /**
+     * 在 Python 2.5D 建筑栅格上规划 A* 或 GA 路径（与 RL 同环境、同巡航高度）
+     * @param algorithm astar | ga
+     */
+    Map<String, Object> planGridPath(List<Double> startPoint, List<Double> endPoint,
+                                     List<Map<String, Object>> obstacles, Integer gridSize,
+                                     Integer missionId, String taskKey, String algorithm);
     
     /**
      * 路径优化
@@ -38,7 +47,17 @@ public interface IPathPlanningService {
      * 获取强化学习模型生成的图表（Base64 png）
      * @param name training_progress | uav_trajectory | current_trajectory | uav_environment
      */
-    Map<String, Object> getRlPlot(String name, Integer missionId);
+    Map<String, Object> getRlPlot(String name, Integer missionId, String taskKey);
+
+    /**
+     * 按任务起终点在 Python 端训练 Q 表（南昌市建筑矢量栅格）
+     */
+    Map<String, Object> trainTaskModel(Map<String, Object> params);
+
+    /**
+     * 查询任务 Q 表是否已训练
+     */
+    Map<String, Object> getTaskModelStatus(String taskKey);
 
     /**
      * 调用 Python 生成起点–终点走廊内建筑的三维 ENU 图（images/uav_environment.png）
@@ -54,4 +73,14 @@ public interface IPathPlanningService {
      * 保存 Java 端算法路径到 JSON（供 Python 训练可视化对比读取）
      */
     Map<String, Object> saveExternalAlgorithmPath(Map<String, Object> params);
+
+    /**
+     * 基于已有 Q 表与已导出的 Java A*和GA 路径，重新生成 Python 对比图
+     */
+    Map<String, Object> regenerateRlComparisonPlots(Map<String, Object> params);
+
+    /**
+     * 基于任务 Q 表与已导出的 A*GA 路径，重新生成下对比图
+     */
+    Map<String, Object> regenerateTaskRlPlots(Map<String, Object> params);
 }

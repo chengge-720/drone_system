@@ -26,6 +26,12 @@ public class Uav {
     //无人机最大载重
     private BigDecimal uavMaxLoad;
 
+    //无人机最大速度(m/s)
+    private BigDecimal uavMaxSpeed;
+
+    //剩余电量续航(百分比，100表示满电)
+    private BigDecimal uavRemainingBattery;
+
     //无人机电池类型
     private String uavBatteryType;
 

@@ -13,6 +13,8 @@
         <result property="uavType" column="uav_type"/>
         <result property="uavMaxFlightTime" column="max_flight_time"/>
         <result property="uavMaxLoad" column="max_load"/>
+        <result property="uavMaxSpeed" column="max_speed"/>
+        <result property="uavRemainingBattery" column="remaining_battery"/>
         <result property="uavBatteryType" column="battery_type"/>
         <result property="uavBatteryCapacity" column="battery_capacity"/>
         <result property="uavManufacturer" column="manufacturer"/>
@@ -22,7 +24,7 @@
     </resultMap>
     
     <sql id="selectUavVo">
-        select uav_id, uav_code, uav_model, uav_type, max_flight_time, max_load, battery_type, 
+        select uav_id, uav_code, uav_model, uav_type, max_flight_time, max_load, max_speed, remaining_battery, battery_type, 
                battery_capacity, manufacturer, status, remark, create_time 
         from uav_base_info
     </sql>
@@ -59,6 +61,8 @@
             <if test="uavType != null and uavType != ''">uav_type,</if>
             <if test="uavMaxFlightTime != null">max_flight_time,</if>
             <if test="uavMaxLoad != null">max_load,</if>
+            <if test="uavMaxSpeed != null">max_speed,</if>
+            <if test="uavRemainingBattery != null">remaining_battery,</if>
             <if test="uavBatteryType != null and uavBatteryType != ''">battery_type,</if>
             <if test="uavBatteryCapacity != null">battery_capacity,</if>
             <if test="uavManufacturer != null and uavManufacturer != ''">manufacturer,</if>
@@ -72,6 +76,8 @@
             <if test="uavType != null and uavType != ''">#{uavType},</if>
             <if test="uavMaxFlightTime != null">#{uavMaxFlightTime},</if>
             <if test="uavMaxLoad != null">#{uavMaxLoad},</if>
+            <if test="uavMaxSpeed != null">#{uavMaxSpeed},</if>
+            <if test="uavRemainingBattery != null">#{uavRemainingBattery},</if>
             <if test="uavBatteryType != null and uavBatteryType != ''">#{uavBatteryType},</if>
             <if test="uavBatteryCapacity != null">#{uavBatteryCapacity},</if>
             <if test="uavManufacturer != null and uavManufacturer != ''">#{uavManufacturer},</if>
@@ -89,6 +95,8 @@
             <if test="uavType != null and uavType != ''">uav_type = #{uavType},</if>
             <if test="uavMaxFlightTime != null">max_flight_time = #{uavMaxFlightTime},</if>
             <if test="uavMaxLoad != null">max_load = #{uavMaxLoad},</if>
+            <if test="uavMaxSpeed != null">max_speed = #{uavMaxSpeed},</if>
+            <if test="uavRemainingBattery != null">remaining_battery = #{uavRemainingBattery},</if>
             <if test="uavBatteryType != null and uavBatteryType != ''">battery_type = #{uavBatteryType},</if>
             <if test="uavBatteryCapacity != null">battery_capacity = #{uavBatteryCapacity},</if>
             <if test="uavManufacturer != null and uavManufacturer != ''">manufacturer = #{uavManufacturer},</if>

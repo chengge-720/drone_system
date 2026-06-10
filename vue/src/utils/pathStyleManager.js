@@ -235,60 +235,6 @@ export const getAlgorithmDescription = (algorithm) => {
 }
 
 /**
- * 比较两种算法的优劣
- * @param {Object} astarResult - A*算法结果
- * @param {Object} dijkstraResult - Dijkstra 算法结果
- * @returns {Object} 比较结果
- */
-export const compareAlgorithms = (astarResult, dijkstraResult) => {
-  if (!astarResult || !dijkstraResult) {
-    return {
-      better: null,
-      reasons: ['数据不完整，无法比较'],
-      advantages: []
-    }
-  }
-  
-  const reasons = []
-  const advantages = []
-  
-  // 距离比较
-  if (astarResult.distance <= dijkstraResult.distance) {
-    reasons.push('A*算法路径更短或相等')
-    if (astarResult.distance < dijkstraResult.distance) {
-      advantages.push(`距离缩短${((dijkstraResult.distance - astarResult.distance) / dijkstraResult.distance * 100).toFixed(1)}%`)
-    }
-  } else {
-    reasons.push('Dijkstra 算法路径更短')
-    advantages.push(`距离缩短${((astarResult.distance - dijkstraResult.distance) / astarResult.distance * 100).toFixed(1)}%`)
-  }
-  
-  // 时间比较
-  if (astarResult.time <= dijkstraResult.time) {
-    reasons.push('A*算法预计用时更少或相等')
-    if (astarResult.time < dijkstraResult.time) {
-      advantages.push(`时间节省${((dijkstraResult.time - astarResult.time) / dijkstraResult.time * 100).toFixed(1)}%`)
-    }
-  } else {
-    reasons.push('Dijkstra 算法预计用时更少')
-    advantages.push(`时间节省${((astarResult.time - dijkstraResult.time) / astarResult.time * 100).toFixed(1)}%`)
-  }
-  
-  // 路径点数比较（越少越平滑）
-  if (astarResult.points <= dijkstraResult.points) {
-    reasons.push('A*算法路径点更少，路径更平滑')
-  } else {
-    reasons.push('Dijkstra 算法路径点更少，路径更平滑')
-  }
-  
-  return {
-    better: astarResult.distance <= dijkstraResult.distance ? 'A*算法' : '迪杰斯特拉算法',
-    reasons,
-    advantages
-  }
-}
-
-/**
  * 默认导出所有方法
  */
 export default {
@@ -300,6 +246,5 @@ export default {
   clearPolyline,
   getAlgorithmEmoji,
   getAlgorithmDescription,
-  compareAlgorithms,
   ALGORITHM_STYLES
 }

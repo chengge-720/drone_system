@@ -8,6 +8,8 @@ import com.drone.system.service.IUavTaskService;
 import jakarta.annotation.Resource;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -67,6 +69,9 @@ public class UavTaskServiceImpl implements IUavTaskService {
         
         // 处理无人机状态变化
         handleUavStatusChange(oldTask, uavTask);
+
+        // 任务完成时扣减无人机剩余电量
+        deductBatteryWhenTaskCompleted(oldTask, uavTask);
         
         return result;
     }
@@ -152,6 +157,78 @@ public class UavTaskServiceImpl implements IUavTaskService {
         return availableUavs;
     }
 
+    private static final double BATTERY_SAFETY_FACTOR = 1.1;
+
+    /**
+     * 计算无人机满电时的最大航程（公里）
+     */
+    private double getMaxRangeKm(Uav uav) {
+        if (uav.getUavMaxFlightTime() == null || uav.getUavMaxFlightTime() <= 0) {
+            return 0;
+        }
+        double speed = uav.getUavMaxSpeed() != null ? uav.getUavMaxSpeed().doubleValue() : 10.0;
+        return uav.getUavMaxFlightTime() * 60.0 * speed / 1000.0;
+    }
+
+    /**
+     * 根据剩余电量百分比计算当前可飞行航程（公里）
+     */
+    private double getRemainingRangeKm(Uav uav) {
+        double maxRange = getMaxRangeKm(uav);
+        if (maxRange <= 0) {
+            return 0;
+        }
+        double batteryPercent = uav.getUavRemainingBattery() != null
+                ? uav.getUavRemainingBattery().doubleValue()
+                : 100.0;
+        return maxRange * batteryPercent / 100.0;
+    }
+
+    /**
+     * 判断剩余电量航程是否满足任务需求（需覆盖任务距离的110%）
+     */
+    private boolean hasEnoughBatteryForTask(Uav uav, double taskDistanceKm) {
+        if (taskDistanceKm <= 0) {
+            return true;
+        }
+        return getRemainingRangeKm(uav) >= taskDistanceKm * BATTERY_SAFETY_FACTOR;
+    }
+
+    /**
+     * 任务完成后按飞行距离比例扣减剩余电量
+     */
+    private void deductBatteryWhenTaskCompleted(UavTask oldTask, UavTask newTask) {
+        if (newTask == null || newTask.getStatus() == null || newTask.getStatus() != 3) {
+            return;
+        }
+        if (oldTask != null && oldTask.getStatus() != null && oldTask.getStatus() == 3) {
+            return;
+        }
+        if (newTask.getUavId() == null || newTask.getMaxDistance() == null || newTask.getMaxDistance() <= 0) {
+            return;
+        }
+
+        Uav uav = uavMapper.selectUavByUavId(newTask.getUavId());
+        if (uav == null) {
+            return;
+        }
+
+        double maxRange = getMaxRangeKm(uav);
+        if (maxRange <= 0) {
+            return;
+        }
+
+        double consumedPercent = (newTask.getMaxDistance() / maxRange) * 100.0;
+        double currentPercent = uav.getUavRemainingBattery() != null
+                ? uav.getUavRemainingBattery().doubleValue()
+                : 100.0;
+        double newPercent = Math.max(0, currentPercent - consumedPercent);
+        uav.setUavRemainingBattery(
+                BigDecimal.valueOf(newPercent).setScale(2, RoundingMode.HALF_UP)
+        );
+        uavMapper.updateUav(uav);
+    }
+
     /**
      * 判断无人机是否适合执行任务
      *
@@ -161,16 +238,19 @@ public class UavTaskServiceImpl implements IUavTaskService {
      * @return 是否适合
      */
     private boolean isUavSuitableForTask(Uav uav, String taskType, double distance) {
-        // 1. 检查续航时间：假设每公里需要 1 分钟续航时间
+        // 1. 检查续航时间
         boolean hasEnoughFlightTime = uav.getUavMaxFlightTime() != null && uav.getUavMaxFlightTime() >= distance;
         
-        // 2. 检查载重能力：载重能力要大于等于两倍的路径距离
+        // 2. 检查载重能力
         boolean hasEnoughLoadCapacity = uav.getUavMaxLoad() != null && uav.getUavMaxLoad().doubleValue() >= (distance * 2);
         
-        // 3. 检查无人机状态：必须是可用状态（1）
+        // 3. 检查无人机状态
         boolean isAvailable = uav.getUavStatus() != null && uav.getUavStatus() == 1;
+
+        // 4. 检查剩余电量航程是否覆盖任务距离的110%
+        boolean hasEnoughBattery = hasEnoughBatteryForTask(uav, distance);
         
-        return hasEnoughFlightTime && hasEnoughLoadCapacity && isAvailable;
+        return hasEnoughFlightTime && hasEnoughLoadCapacity && isAvailable && hasEnoughBattery;
     }
 
     /**
@@ -217,13 +297,20 @@ public class UavTaskServiceImpl implements IUavTaskService {
     private double calculateUavMatchScore(Uav uav, UavTask task) {
         double score = 0;
 
-        // 1. 基础适配性检查（不满足直接返回 0）
-        // 续航时间检查（公里转分钟，假设平均速度 10m/s = 36km/h）
-        double requiredFlightTime = task.getMaxDistance() * 60 / 36; // 转换为分钟
-        if (uav.getUavMaxFlightTime() == null || uav.getUavMaxFlightTime() < requiredFlightTime) {
-            return 0; // 续航不足，直接淘汰
+        double taskDistance = task.getMaxDistance() != null ? task.getMaxDistance() : 0;
+
+        // 剩余电量航程不足任务距离110%时直接淘汰
+        if (!hasEnoughBatteryForTask(uav, taskDistance)) {
+            return 0;
         }
-        score += 30; // 续航达标得 30 分
+
+        // 1. 基础适配性检查（不满足直接返回 0）
+        double speed = uav.getUavMaxSpeed() != null ? uav.getUavMaxSpeed().doubleValue() : 10.0;
+        double requiredFlightTime = taskDistance * 1000 / speed / 60; // 公里转分钟
+        if (uav.getUavMaxFlightTime() == null || uav.getUavMaxFlightTime() < requiredFlightTime) {
+            return 0;
+        }
+        score += 30;
 
         // 载重能力检查
         if (task.getRequiredLoad() != null && task.getRequiredLoad() > 0) {
@@ -253,27 +340,24 @@ public class UavTaskServiceImpl implements IUavTaskService {
         }
 
         // 3. 距离适配性（避免大材小用）
-        double distanceFactor = 1.0;
-        if (task.getMaxDistance() != null && task.getMaxDistance() > 0) {
-            // 实际需要的续航是任务距离的 1.5 倍作为安全余量
-            double neededRange = task.getMaxDistance() * 1.5;
-            if (uav.getUavMaxFlightTime() != null) {
-                // 无人机续航（分钟）转换为公里数
-                double uavRange = uav.getUavMaxFlightTime() * 36 / 60;
-                if (uavRange >= neededRange && uavRange <= neededRange * 2) {
-                    distanceFactor = 1.0; // 完美匹配
-                    score += 20; // 完美匹配得 20 分
-                } else if (uavRange > neededRange * 2) {
-                    distanceFactor = 0.7; // 性能过剩
-                    score += 10; // 性能过剩得 10 分
-                } else {
-                    distanceFactor = 0.5; // 勉强够用
-                    score += 5; // 勉强够用得 5 分
-                }
+        if (taskDistance > 0) {
+            double neededRange = taskDistance * BATTERY_SAFETY_FACTOR;
+            double remainingRange = getRemainingRangeKm(uav);
+            if (remainingRange >= neededRange && remainingRange <= neededRange * 2) {
+                score += 20;
+            } else if (remainingRange > neededRange * 2) {
+                score += 10;
+            } else {
+                score += 5;
             }
         }
 
-        // 4. 任务类型适配性
+        // 4. 剩余电量越高，匹配度略加分
+        if (uav.getUavRemainingBattery() != null) {
+            score += uav.getUavRemainingBattery().doubleValue() / 20.0;
+        }
+
+        // 5. 任务类型适配性
         if (task.getTaskType() != null && !task.getTaskType().isEmpty()) {
             // 如果无人机类型与任务类型匹配，加分
             if (uav.getUavType() != null && uav.getUavType().contains(task.getTaskType())) {

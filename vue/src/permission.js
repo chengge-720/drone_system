@@ -14,6 +14,26 @@ const isWhiteList = (path) => {
     return whiteList.includes(path)
 }
 
+/** Vite 开发态 HMR 或发版后 chunk 哈希变化时，动态 import 可能 404；整页刷新一次即可恢复 */
+const DYNAMIC_IMPORT_RELOAD_KEY = 'vite_dynamic_import_reload_v1'
+router.onError((error, to) => {
+  const msg = String(error?.message || error || '')
+  const isDynamicImportFail =
+    msg.includes('Failed to fetch dynamically imported module') ||
+    msg.includes('fetch dynamically imported module') ||
+    msg.includes('Importing a module script failed') ||
+    msg.includes('Outdated Optimize Dep')
+  if (!isDynamicImportFail) return
+  const reloadKey = `${to.fullPath}|${msg.slice(0, 80)}`
+  try {
+    if (sessionStorage.getItem(DYNAMIC_IMPORT_RELOAD_KEY) === reloadKey) return
+    sessionStorage.setItem(DYNAMIC_IMPORT_RELOAD_KEY, reloadKey)
+  } catch {
+    return
+  }
+  window.location.assign(to.fullPath)
+})
+
 //全局路由执行函数
 router.beforeEach((to,from,next) => {
     //先检查用户的token

@@ -2,6 +2,8 @@
 import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { selectTaskByTaskId, selectTaskList } from '@/api/system/task.js'
+import { loadPlanningSession } from '@/utils/taskExecutionStorage'
 import {
   mountCesiumFlightMap,
   type CesiumCityBuildingsHandle
@@ -53,6 +55,7 @@ const viewerHandle = shallowRef<CesiumCityBuildingsHandle | null>(null)
 const playback = shallowRef<FlightPlaybackHandle | null>(null)
 const entities = ref<FlightSceneEntities>({
   pathEntity: null,
+  pathGlowEntity: null,
   startEntity: null,
   endEntity: null,
   droneEntity: null
@@ -74,8 +77,47 @@ const rlMeta = ref<Record<string, unknown> | null>(null)
 const progressIndex = ref(0)
 const progressTotal = ref(0)
 const progressDistanceM = ref(0)
+const sampleMaxPoints = ref(240)
+const switchingTask = ref(false)
+const inferMode = ref<'auto' | 'rl' | 'planned'>('auto')
+const taskQueue = ref<any[]>([])
+const activeTaskId = ref<number | null>(null)
+const editAltitudeM = ref(120)
 
-const targetAltitudeM = computed(() => Number(session.value?.targetAltitudeM) || 120)
+const algorithmOptions = [
+  { label: '自动（规划优先）', value: 'auto' },
+  { label: 'RL Q-table', value: 'rl' },
+  { label: '仅规划路径', value: 'planned' }
+]
+
+const taskStatusMap: Record<number, string> = {
+  1: '待执行',
+  2: '执行中',
+  3: '已完成',
+  4: '已取消'
+}
+
+const progressPercent = computed(() => {
+  if (!progressTotal.value) return 0
+  return Math.min(100, Math.round((progressIndex.value / progressTotal.value) * 100))
+})
+
+const sampledPointText = computed(() => {
+  const total = pathPoints.value.length
+  if (!total) return '—'
+  const shown = Math.min(total, sampleMaxPoints.value)
+  return `${shown} / ${total}`
+})
+
+const targetAltitudeM = computed(
+  () => Number(editAltitudeM.value) || Number(session.value?.targetAltitudeM) || 120
+)
+
+function taskStatusLabel(status?: number) {
+  if (status == null) return '—'
+  return taskStatusMap[status] || '未知'
+}
+
 const taskTitle = computed(() => session.value?.taskName || `任务 #${session.value?.taskId ?? '—'}`)
 const missionLabel = computed(() =>
   missionId.value > 0 ? getMissionLabel(missionId.value) : '未匹配训练任务（将使用已有路径或默认推理）'
@@ -86,29 +128,6 @@ const pathStatsText = computed(() => {
   const s = calculatePathStats(flat)
   return `${s.totalDistance} m · 约 ${s.estimatedTime} s · ${pathPoints.value.length} 点`
 })
-const routePlanSteps = computed(() => [
-  {
-    title: '读取任务起终点',
-    desc: `${session.value?.startLocation || '起点'} → ${session.value?.endLocation || '终点'}`
-  },
-  {
-    title: '匹配 Python Q-table',
-    desc: missionId.value > 0 ? getMissionLabel(missionId.value) : '未命中训练任务时使用已规划路径'
-  },
-  {
-    title: '统一到 WGS84',
-    desc: '高德 GCJ-02 路线会先转换为 Cesium / GeoJSON 使用的 WGS84'
-  },
-  {
-    title: '生成轻量三维路线',
-    desc: `抽样渲染 ${Math.min(pathPoints.value.length, 240)} / ${pathPoints.value.length || 0} 个路径点，降低 Cesium 重绘压力`
-  },
-  {
-    title: '按需播放演算',
-    desc: '默认先展示路线图，点击播放后再启动无人机动画'
-  }
-])
-
 let geoMap: any = null
 let geoMapEl: HTMLDivElement | null = null
 
@@ -181,6 +200,69 @@ async function resolveEndpoints(s: FlightSimSession) {
   return { start, end }
 }
 
+function buildSessionFromTask(task: any, planning: ReturnType<typeof loadPlanningSession>): FlightSimSession {
+  const pts = planning?.pathPoints || []
+  const normalized = normalizeGeoPathPoints(pts)
+  const pathPointsWgs =
+    normalized.length >= 2 ? convertPathGcj02ToWgs84(normalized as any) : undefined
+  return {
+    taskId: task.taskId,
+    taskName: task.taskName,
+    taskType: task.taskType,
+    startLocation: task.startLocation,
+    endLocation: task.endLocation,
+    pathPoints: normalized.length >= 2 ? normalized : undefined,
+    pathPointsWgs,
+    coordinateSystem: 'GCJ02',
+    cesiumCoordinateSystem: 'WGS84',
+    targetAltitudeM: planning?.targetAltitudeM ?? 120,
+    algorithm: planning?.lastAlgorithm || task.taskType,
+    preferRl: false
+  }
+}
+
+async function loadTaskQueue() {
+  try {
+    const resp = await selectTaskList({ pageNum: 1, pageSize: 200 })
+    taskQueue.value = (resp?.rows || []).filter((t: any) => t.status !== 4)
+  } catch {
+    taskQueue.value = []
+  }
+}
+
+async function switchQueueTask(taskId: number) {
+  if (switchingTask.value) return
+  if (activeTaskId.value === taskId && pathPoints.value.length >= 2) return
+
+  switchingTask.value = true
+  loading.value = true
+  stopPlayback()
+  try {
+    const resp = await selectTaskByTaskId(taskId)
+    if (resp?.code !== 200) throw new Error(resp?.msg || '加载任务失败')
+    const task = resp.data
+    const planning = loadPlanningSession(taskId)
+    activeTaskId.value = taskId
+    session.value = buildSessionFromTask(task, planning)
+    editAltitudeM.value = session.value.targetAltitudeM ?? 120
+    inferMode.value = 'auto'
+
+    try {
+      localStorage.setItem(FLIGHT_SIM_SESSION_KEY, JSON.stringify(session.value))
+    } catch {}
+
+    const { start, end } = await resolveEndpoints(session.value)
+    session.value = { ...session.value, startWgs: start, endWgs: end, cesiumCoordinateSystem: 'WGS84' }
+    await loadPathWithRl(start, end)
+    renderRoutePreview()
+  } catch (e: any) {
+    ElMessage.error(e?.message || String(e))
+  } finally {
+    switchingTask.value = false
+    loading.value = false
+  }
+}
+
 async function loadPathWithRl(start: { lat: number; lng: number }, end: { lat: number; lng: number }, forceRl = false) {
   const mid =
     Number(session.value?.missionId) ||
@@ -193,8 +275,14 @@ async function loadPathWithRl(start: { lat: number; lng: number }, end: { lat: n
     })
   missionId.value = mid
 
+  const mode = inferMode.value
+  const useForceRl = forceRl || mode === 'rl'
   const existing = getExistingCesiumPath(session.value)
-  if (!forceRl && existing.length >= 2) {
+
+  if (mode === 'planned') {
+    if (existing.length < 2) {
+      throw new Error('该任务暂无规划路径，请先在任务规划页生成路径')
+    }
     pathPoints.value = existing.map((p) => ({
       lng: p.lng,
       lat: p.lat,
@@ -204,7 +292,17 @@ async function loadPathWithRl(start: { lat: number; lng: number }, end: { lat: n
     return
   }
 
-  const preferRl = forceRl || session.value?.preferRl === true
+  if (!useForceRl && existing.length >= 2) {
+    pathPoints.value = existing.map((p) => ({
+      lng: p.lng,
+      lat: p.lat,
+      alt: Number(p.alt ?? targetAltitudeM.value)
+    }))
+    rlMeta.value = null
+    return
+  }
+
+  const preferRl = useForceRl || session.value?.preferRl === true
   if (preferRl && mid > 0) {
     planning.value = true
     try {
@@ -275,9 +373,11 @@ function renderRoutePreview() {
   progressTotal.value = Math.max(pathPoints.value.length - 1, 0)
   progressDistanceM.value = 0
   drawFlightPathOnViewer(viewer, pathPoints.value, entities.value, {
-    pathColor: '#38bdf8',
+    pathColor: '#22d3ee',
     pathWidth: 4,
-    showEndpoints: true
+    showEndpoints: true,
+    glow: true,
+    maxRenderPoints: sampleMaxPoints.value
   })
 }
 
@@ -301,11 +401,24 @@ async function replanAndPlay() {
   stopPlayback()
   try {
     const { start, end } = await resolveEndpoints(session.value)
-    session.value = { ...session.value, startWgs: start, endWgs: end, cesiumCoordinateSystem: 'WGS84' }
-    session.value.preferRl = true
-    await loadPathWithRl(start, end, true)
+    session.value = {
+      ...session.value,
+      startWgs: start,
+      endWgs: end,
+      cesiumCoordinateSystem: 'WGS84',
+      targetAltitudeM: targetAltitudeM.value,
+      preferRl: inferMode.value === 'rl'
+    }
+    const forceRl = inferMode.value !== 'planned'
+    await loadPathWithRl(start, end, forceRl)
     renderRoutePreview()
-    ElMessage.success('已使用 Q-table 重新生成路线图')
+    const msg =
+      inferMode.value === 'planned'
+        ? '已加载任务规划路径'
+        : inferMode.value === 'rl'
+          ? '已使用 RL Q-table 重新演算路径'
+          : '路径演算完成'
+    ElMessage.success(msg)
   } catch (e: any) {
     ElMessage.error(e?.message || String(e))
   } finally {
@@ -314,9 +427,24 @@ async function replanAndPlay() {
 }
 
 async function bootstrap() {
+  await loadTaskQueue()
   session.value = loadSession()
+
   if (!session.value) {
+    if (taskQueue.value.length) {
+      await switchQueueTask(taskQueue.value[0].taskId)
+      return
+    }
     ElMessage.warning('暂无飞行任务数据，请从「任务规划」页规划后进入飞行模拟')
+    return
+  }
+
+  activeTaskId.value = session.value.taskId ?? null
+  editAltitudeM.value = session.value.targetAltitudeM ?? 120
+
+  const qTaskId = route.query.taskId
+  if (qTaskId != null && Number(qTaskId) !== activeTaskId.value) {
+    await switchQueueTask(Number(qTaskId))
     return
   }
 
@@ -335,6 +463,9 @@ async function bootstrap() {
 
 watch(showImagery, (v) => viewerHandle.value?.setBaseImageryVisible(v))
 watch(speedMultiplier, (v) => playback.value?.setSpeedMultiplier(v))
+watch(sampleMaxPoints, () => {
+  if (pathPoints.value.length >= 2) renderRoutePreview()
+})
 watch(showBuildings, async (v) => {
   const handle = viewerHandle.value
   if (!handle) return
@@ -392,82 +523,150 @@ onUnmounted(() => {
 
 <template>
   <div class="app-container flight-sim-page">
-    <header class="flight-sim-header">
-      <div>
-        <h1 class="flight-sim-title">飞行模拟 · Cesium</h1>
-        <p class="flight-sim-sub">{{ taskTitle }} · {{ session?.taskType || '任务' }} · {{ pathStatsText }}</p>
-      </div>
-    </header>
+    <div ref="mapRef" class="flight-sim-stage" v-loading="loading || planning" />
 
-    <div class="flight-sim-card">
-      <div class="flight-sim-toolbar">
-        <span class="flight-mission-chip">{{ missionLabel }}</span>
-        <div class="flight-side-actions" style="flex-direction: row; flex-wrap: wrap;">
-          <el-button size="small" :type="isPlaying ? 'warning' : 'primary'" :loading="loading" @click="togglePlay">
-            {{ isPlaying ? '暂停演算' : '播放演算' }}
-          </el-button>
-          <el-button size="small" :loading="planning || loading" @click="replanAndPlay">重算路线图</el-button>
-          <el-switch v-model="showImagery" active-text="影像" inactive-text="纯色" />
-        </div>
-      </div>
-
-      <div class="flight-sim-body">
-        <aside class="flight-sim-side">
-          <div class="flight-side-block">
-            <div class="flight-side-label">任务</div>
-            <div class="flight-stat-row"><span>起点</span><strong>{{ session?.startLocation || '—' }}</strong></div>
-            <div class="flight-stat-row"><span>终点</span><strong>{{ session?.endLocation || '—' }}</strong></div>
-            <div class="flight-stat-row"><span>巡航高度</span><strong>{{ targetAltitudeM }} m</strong></div>
-            <div class="flight-stat-row">
-              <span>算法</span>
-              <strong>{{ session?.algorithm || (missionId > 0 ? 'RL Q-table' : '—') }}</strong>
-            </div>
-          </div>
-
-          <div class="flight-side-block">
-            <div class="flight-side-label">路线图</div>
-            <div class="flight-route-plan">
-              <div v-for="(step, idx) in routePlanSteps" :key="step.title" class="flight-route-step">
-                <span class="flight-route-dot">{{ idx + 1 }}</span>
-                <div>
-                  <div class="flight-route-main">{{ step.title }}</div>
-                  <div class="flight-route-sub">{{ step.desc }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="flight-side-block">
-            <div class="flight-side-label">演算</div>
-            <div class="flight-stat-row"><span>进度</span><strong>{{ progressIndex }} / {{ progressTotal }}</strong></div>
-            <div class="flight-stat-row"><span>已飞距离</span><strong>{{ progressDistanceM }} m</strong></div>
-            <div v-if="rlMeta?.plannerMode" class="flight-stat-row">
-              <span>推理模式</span><strong>{{ rlMeta.plannerMode }}</strong>
-            </div>
-          </div>
-
-          <div class="flight-side-block">
-            <div class="flight-side-label">播放速度</div>
-            <el-slider v-model="speedMultiplier" :min="0.5" :max="4" :step="0.5" />
-          </div>
-
-          <div class="flight-side-block">
-            <div class="flight-side-label">性能</div>
-            <div class="flight-stat-row">
-              <span>建筑体块</span>
-              <el-switch v-model="showBuildings" :loading="buildingsLoading" active-text="开" inactive-text="关" />
-            </div>
-          </div>
-        </aside>
-
-        <div ref="mapRef" class="flight-sim-map" v-loading="loading || planning">
-          <div class="flight-sim-overlay">
-            Python Q-table · mission {{ missionId > 0 ? missionId : 'auto' }}
-            <br />
-            轻量路线图 · 按需播放三维演算
-          </div>
-        </div>
+    <div class="fs-hud">
+      <div class="fs-hud__title">{{ taskTitle }}</div>
+      <div class="fs-hud__sub">
+        {{ session?.taskType || '任务' }} · {{ pathStatsText }}
+        <br />
+        {{ missionLabel }}
       </div>
     </div>
+
+    <aside class="fs-panel--left">
+      <div class="fs-panel__head">
+        <h2 class="fs-panel__title">飞行监控</h2>
+        <span class="fs-panel__badge">{{ isPlaying ? 'PLAY' : 'STBY' }}</span>
+      </div>
+
+      <div class="fs-panel__scroll">
+        <div class="fs-block">
+          <div class="fs-block__label">航路参数</div>
+          <dl class="fs-kv">
+            <dt>起点</dt>
+            <dd>{{ session?.startLocation || '—' }}</dd>
+            <dt>终点</dt>
+            <dd>{{ session?.endLocation || '—' }}</dd>
+            <dt>算法</dt>
+            <dd>{{ session?.algorithm || (missionId > 0 ? 'RL Q-table' : '—') }}</dd>
+          </dl>
+          <div class="fs-field" style="margin-top: 8px">
+            <span class="fs-field__label">巡航高度 (m)</span>
+            <el-input-number v-model="editAltitudeM" :min="30" :max="500" :step="10" size="small" />
+          </div>
+          <div class="fs-field" style="margin-top: 8px">
+            <span class="fs-field__label">路径算法</span>
+            <el-select v-model="inferMode" size="small" style="width: 100%">
+              <el-option
+                v-for="opt in algorithmOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+          </div>
+        </div>
+
+        <div class="fs-block">
+          <div class="fs-block__label">演算遥测</div>
+          <div class="fs-telemetry">
+            <div class="fs-telemetry__cell">
+              <span class="fs-telemetry__label">进度</span>
+              <span class="fs-telemetry__value">{{ progressIndex }}/{{ progressTotal }}</span>
+            </div>
+            <div class="fs-telemetry__cell">
+              <span class="fs-telemetry__label">已飞距离</span>
+              <span class="fs-telemetry__value">{{ progressDistanceM }} m</span>
+            </div>
+            <div class="fs-telemetry__cell">
+              <span class="fs-telemetry__label">巡航高度</span>
+              <span class="fs-telemetry__value">{{ targetAltitudeM }} m</span>
+            </div>
+            <div class="fs-telemetry__cell">
+              <span class="fs-telemetry__label">Mission</span>
+              <span class="fs-telemetry__value">{{ missionId > 0 ? missionId : '—' }}</span>
+            </div>
+          </div>
+          <p v-if="rlMeta?.plannerMode" class="fs-hud__sub" style="margin: 8px 0 0">
+            推理模式 · {{ rlMeta.plannerMode }}
+          </p>
+        </div>
+
+        <div class="fs-block">
+          <div class="fs-queue__head">
+            <div class="fs-block__label" style="margin-bottom: 0">任务队列</div>
+            <span class="fs-queue__count">{{ taskQueue.length }} 项</span>
+          </div>
+          <div class="fs-queue__track">
+            <button
+              v-for="t in taskQueue"
+              :key="t.taskId"
+              type="button"
+              class="fs-queue__item"
+              :class="{ 'is-active': activeTaskId === t.taskId }"
+              @click="switchQueueTask(t.taskId)"
+            >
+              <span class="fs-queue__name">{{ t.taskName || `任务 #${t.taskId}` }}</span>
+              <span class="fs-queue__meta">{{ taskStatusLabel(t.status) }} · {{ t.taskType || '—' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <footer class="fs-dock">
+      <div class="fs-dock__group">
+        <button
+          type="button"
+          class="fs-dock__btn fs-dock__btn--primary"
+          :disabled="!session || loading || planning"
+          @click="replanAndPlay"
+        >
+          {{ planning ? '演算中…' : '路径演算' }}
+        </button>
+      </div>
+
+      <div class="fs-dock__divider" />
+
+      <div class="fs-dock__group">
+        <button
+          type="button"
+          class="fs-dock__btn fs-dock__btn--play"
+          :disabled="pathPoints.length < 2 || loading"
+          @click="togglePlay"
+        >
+          {{ isPlaying ? '暂停' : '播放' }}
+        </button>
+      </div>
+
+      <div class="fs-dock__divider" />
+
+      <div class="fs-dock__group fs-dock__group--grow">
+        <span class="fs-dock__label">抽样渲染 {{ sampledPointText }}</span>
+        <el-slider v-model="sampleMaxPoints" :min="60" :max="800" :step="20" style="flex: 1; min-width: 100px" />
+      </div>
+
+      <div class="fs-dock__divider" />
+
+      <div class="fs-dock__group">
+        <span class="fs-dock__label">倍速 ×{{ speedMultiplier }}</span>
+        <el-slider v-model="speedMultiplier" :min="0.5" :max="4" :step="0.5" style="width: 96px" />
+      </div>
+
+      <div class="fs-dock__divider" />
+
+      <div class="fs-dock__group">
+        <el-switch v-model="showImagery" active-text="影像" inactive-text="底图" />
+        <el-switch v-model="showBuildings" :loading="buildingsLoading" active-text="建筑" inactive-text="建筑" />
+      </div>
+
+      <div class="fs-dock__group fs-dock__progress">
+        <span class="fs-dock__label">演算进度 {{ progressPercent }}%</span>
+        <div class="fs-dock__progress-bar">
+          <div class="fs-dock__progress-fill" :style="{ width: `${progressPercent}%` }" />
+        </div>
+      </div>
+    </footer>
   </div>
 </template>

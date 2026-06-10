@@ -1,108 +1,92 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import SvgIcon from '@/components/SvgIcon/index.vue'
+import SidebarIcon from '@/views/layout/components/Sidebar/SidebarIcon.vue'
 
 const props = defineProps({
-  //菜单项的数据对象
-  item:{
-    type:Object,
-    required:true,
+  item: {
+    type: Object,
+    required: true
   },
-  //标记是否嵌套使用
-  isNext:{
-    type:Boolean,
-    default:false,
+  isNext: {
+    type: Boolean,
+    default: false
   },
-  //基础路径，用于拼接完整的路由路径
-  basePath:{
-    type:String,
-    default:'',
+  basePath: {
+    type: String,
+    default: ''
+  },
+  collapsed: {
+    type: Boolean,
+    default: false
   }
 })
 
-//计算当前菜单项的唯一显示子项
-const onlyOneChild = computed(()=>{
-  //获取当前菜单项的子项类
+const onlyOneChild = computed(() => {
   const children = props.item.children || []
-  //筛选出不需要隐藏的子项
-  const showingChildren = children.filter(item => !item.hidden)
-  //如果只有一个需要显示的子项
-  if(showingChildren.length === 1){
+  const showingChildren = children.filter((item) => !item.hidden)
+  if (showingChildren.length === 1) {
     return showingChildren[0]
   }
-  //如果没有需要显示的子项
-  if(showingChildren.length === 0){
-    return{
-      ...props.item,//复制父项的所有属性
-      path:'',//路径设置为空
-      noShowingChildren:true,//标记当前没有需要显示的子项
+  if (showingChildren.length === 0) {
+    return {
+      ...props.item,
+      path: '',
+      noShowingChildren: true
     }
   }
-  //如果有多个需要显示的子项
   return null
 })
 
-//计算当前菜单项是否应该只显示一个子项
-const shouldShowSingleItem = computed(()=>{
-  //条件1：存在onlyOneChild
-  //条件2：当前项没有子项
-  //条件3：父项没有设置为折叠菜单
-  return onlyOneChild.value && (!onlyOneChild.value.children || onlyOneChild.value.noShowingChildren)
-      && !props.item.alwaysShow
- })
-
-//计算单个菜单项点击后应该跳转的完整路径
-const singleItemPath = computed(()=>{
-  return resolvePath(onlyOneChild.value.path)
+const shouldShowSingleItem = computed(() => {
+  return (
+    onlyOneChild.value &&
+    (!onlyOneChild.value.children || onlyOneChild.value.noShowingChildren) &&
+    !props.item.alwaysShow
+  )
 })
 
-//解析并拼接路由路径
+const singleItemPath = computed(() => resolvePath(onlyOneChild.value.path))
+
 const resolvePath = (routePath) => {
-  //拼接基础路径和相对路径
   const fullPath = props.basePath + '/' + routePath
-  //如果路径为空
-  if(!fullPath) return fullPath
-  //处理特殊情况
-  return fullPath.replace('//' , '/')
-      .replace(/\/$/, '')
+  if (!fullPath) return fullPath
+  return fullPath.replace('//', '/').replace(/\/$/, '')
 }
 
+const getIconName = (meta, fallbackMeta) => {
+  return (meta && meta.icon) || (fallbackMeta && fallbackMeta.icon) || null
+}
 </script>
 
 <template>
-<!--第一步，检查菜单项是否需要显示-->
   <div v-if="!item.hidden">
-    <!-- 当前菜单项只需要显示一个子项 -->
     <template v-if="shouldShowSingleItem">
-      <!-- 父级 el-menu 已开启 router，勿再包 router-link，否则 Menu 内部 ref 在卸载时会读到 null -->
       <el-menu-item :index="singleItemPath">
-        <svg-icon
-          v-if="onlyOneChild.meta || item.meta"
-          :icon-class="(onlyOneChild.meta && onlyOneChild.meta.icon) || (item.meta && item.meta.icon)"
-          style="margin-right: 10px"
+        <SidebarIcon
+          :name="getIconName(onlyOneChild.meta, item.meta)"
+          class="tech-sidebar-menu__icon"
         />
         <template #title>
-          <span style="margin-left: 2px">
+          <span class="tech-sidebar-menu__label">
             {{ (onlyOneChild.meta && onlyOneChild.meta.title) || '' }}
           </span>
         </template>
       </el-menu-item>
     </template>
 
-    <!-- 勿写 teleported：会强制所有层级 appendTo body，递归子菜单卸载时易触发 Vue setRef exposed 报错 -->
     <el-sub-menu v-else :index="resolvePath(item.path)" :teleported="false">
       <template v-if="item.meta" #title>
-        <svg-icon v-if="item.meta && item.meta.icon" :icon-class="item.meta.icon" style="margin-right: 10px"/>
-        <span style="margin-left: 2px">
-          {{item.meta && item.meta.title || ''}}
+        <SidebarIcon :name="getIconName(item.meta)" class="tech-sidebar-menu__icon" />
+        <span class="tech-sidebar-menu__label">
+          {{ (item.meta && item.meta.title) || '' }}
         </span>
       </template>
-      <!-- 递归渲染子项 -->
       <sidebar-item
         v-for="(child, cIndex) in item.children"
         :key="`${resolvePath(item.path)}-${child.path}-${cIndex}`"
         :item="child"
         :base-path="resolvePath(child.path)"
+        :collapsed="collapsed"
         is-next
       />
     </el-sub-menu>
@@ -110,5 +94,7 @@ const resolvePath = (routePath) => {
 </template>
 
 <style scoped>
-
+.tech-sidebar-menu__label {
+  margin-left: 2px;
+}
 </style>

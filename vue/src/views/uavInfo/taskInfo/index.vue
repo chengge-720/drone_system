@@ -1,18 +1,16 @@
-<script setup lang="ts">
-import { ref, onMounted, onUnmounted } from "vue"
+﻿<script setup lang="ts">
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue"
 import { useRouter } from 'vue-router'
 import { selectTaskList, insertTask, updateTask, deleteTaskByTaskIds, getAvailableUavs, recommendUavs } from '@/api/system/task.js'
 import { selectUavList } from '@/api/system/uav.js'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Document, List, Edit, Clock, Delete, RefreshLeft, Plus, Close, Check, RefreshRight, MapLocation, VideoCamera } from '@element-plus/icons-vue'
+import { Search, Plus, Edit, Delete, ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import {
   clearExecutionRecord,
   clearPlanningSession,
   getExecutionRemainSeconds,
   loadExecutionRecord
 } from '@/utils/taskExecutionStorage'
-import {VxeModal} from "vxe-pc-ui";
-import 'vxe-pc-ui/lib/style.css'
 import { getDistanceFromLatLonInM, loadNoFlyZones, drawNoFlyZones } from '@/utils/noFlyZoneService.js'
 import { getGeoPoint } from '@/utils/mapInitializer'
 
@@ -29,9 +27,132 @@ const executionCountdowns = ref<Record<number, number>>({})
 let executionCountdownTimer: number | null = null
 const query = ref({
   pageNum: 1,
-  pageSize: 5,
+  pageSize: 12,
   taskName: '',
   taskType: ''
+})
+
+const activeTab = ref<'pool' | 'history' | 'status'>('pool')
+const carouselRef = ref<HTMLElement | null>(null)
+const carouselIndex = ref(0)
+
+const filteredTasks = computed(() => {
+  const list = taskList.value || []
+  if (activeTab.value === 'history') {
+    return list.filter((t: any) => t.status === 3)
+  }
+  if (activeTab.value === 'pool') {
+    return list.filter((t: any) => t.status !== 3 && t.status !== 4)
+  }
+  return list
+})
+
+const systemStats = computed(() => {
+  const list = taskList.value || []
+  return {
+    total: list.length,
+    pending: list.filter((t: any) => t.status === 1).length,
+    running: list.filter((t: any) => t.status === 2).length,
+    completed: list.filter((t: any) => t.status === 3).length,
+    cancelled: list.filter((t: any) => t.status === 4).length
+  }
+})
+
+const activeTask = computed(() => {
+  const list = filteredTasks.value
+  if (!list.length) return null
+  return list[carouselIndex.value] ?? list[0]
+})
+
+const typeDistribution = computed(() => {
+  const source =
+    activeTab.value === 'history'
+      ? (taskList.value || []).filter((t: any) => t.status === 3)
+      : (taskList.value || []).filter((t: any) => t.status !== 3 && t.status !== 4)
+  const map: Record<string, number> = {}
+  for (const t of source) {
+    const key = t.taskType || '其他'
+    map[key] = (map[key] || 0) + 1
+  }
+  const max = Math.max(...Object.values(map), 1)
+  return Object.entries(map)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([name, count]) => ({ name, count, percent: Math.round((count / max) * 100) }))
+})
+
+const runningTasks = computed(() =>
+  (taskList.value || []).filter(
+    (t: any) => t.status === 2 || Boolean(executionCountdowns.value[t.taskId])
+  )
+)
+
+const completionRate = computed(() => {
+  const { total, completed } = systemStats.value
+  if (!total) return 0
+  return Math.round((completed / total) * 100)
+})
+
+const pageTime = ref('')
+
+const updatePageTime = () => {
+  pageTime.value = new Date().toLocaleString('zh-CN', { hour12: false })
+}
+
+const estimateWaypoints = (task: any) => {
+  const km = Number(task?.maxDistance || 0)
+  return Math.max(2, Math.round(km * 4 + 2))
+}
+
+const estimatePowerPercent = (task: any) => {
+  const km = Number(task?.maxDistance || 0)
+  const min = Number(task?.estimatedTime || 0)
+  return Math.min(98, Math.round(km * 10 + min * 1.2 + 8))
+}
+
+const scrollCarouselTo = (index: number) => {
+  const list = filteredTasks.value
+  if (!list.length) return
+  const next = Math.max(0, Math.min(index, list.length - 1))
+  carouselIndex.value = next
+  const el = carouselRef.value
+  if (!el) return
+  const card = el.children[next] as HTMLElement | undefined
+  card?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+}
+
+const prevCarousel = () => scrollCarouselTo(carouselIndex.value - 1)
+const nextCarousel = () => scrollCarouselTo(carouselIndex.value + 1)
+
+const onCarouselScroll = () => {
+  const el = carouselRef.value
+  if (!el || !el.children.length) return
+  const center = el.scrollLeft + el.clientWidth / 2
+  let nearest = 0
+  let minDist = Infinity
+  Array.from(el.children).forEach((child, i) => {
+    const node = child as HTMLElement
+    const cardCenter = node.offsetLeft + node.offsetWidth / 2
+    const dist = Math.abs(cardCenter - center)
+    if (dist < minDist) {
+      minDist = dist
+      nearest = i
+    }
+  })
+  carouselIndex.value = nearest
+}
+
+const publishTask = (task: any) => {
+  if (isTaskExecuting(task)) {
+    ElMessage.warning('任务执行中，请先终止后再操作')
+    return
+  }
+  goToTaskPlanning(task.taskId)
+}
+
+watch([filteredTasks, activeTab], () => {
+  carouselIndex.value = 0
+  nextTick(() => scrollCarouselTo(0))
 })
 
 // 任务表单数据
@@ -435,23 +556,22 @@ const getBestMatchUavs = async (distance) => {
     availableUavs.value = response.data || []
     
     if (availableUavs.value.length === 0) {
-      ElMessage.info('没有找到符合条件的无人机')
-      // fallback: 获取所有可用无人机
-      const uavResponse = await selectUavList({ pageNum: 1, pageSize: 100 })
-      availableUavs.value = uavResponse.rows || []
+      ElMessage.warning('没有剩余电量足以覆盖该任务（含110%安全余量）的无人机')
+      taskForm.value.uavId = null
     } else {
       ElMessage.success(`智能推荐 ${availableUavs.value.length} 架最合适的无人机`)
       // 自动选择排名第一的无人机
       if (availableUavs.value.length > 0) {
         taskForm.value.uavId = availableUavs.value[0].uavId
-        ElMessage.success(`已自动匹配最佳无人机：${availableUavs.value[0].uavModel}`)
+        const battery = availableUavs.value[0].uavRemainingBattery ?? 100
+        ElMessage.success(`已自动匹配：${availableUavs.value[0].uavModel}（剩余电量 ${battery}%）`)
       }
     }
   } catch (error) {
     console.error('❌ 智能推荐失败:', error)
-    // fallback: 直接获取所有无人机
-    const uavResponse = await selectUavList({ pageNum: 1, pageSize: 100 })
-    availableUavs.value = uavResponse.rows || []
+    availableUavs.value = []
+    taskForm.value.uavId = null
+    ElMessage.error('无人机匹配失败，请稍后重试')
   }
 }
 
@@ -585,8 +705,10 @@ const handleDelete = (row) => {
 
 // 组件挂载时加载任务列表
 onMounted(() => {
+  updatePageTime()
   getTaskList()
   executionCountdownTimer = window.setInterval(refreshExecutionCountdowns, 1000)
+  window.setInterval(updatePageTime, 60000)
   window.addEventListener('uav-vector-regions-changed', renderNoFlyZones)
 })
 
@@ -663,1219 +785,505 @@ const formatDate = (date: string | Date) => {
   return `${year}-${month}-${day} ${hours}:${minutes}`
 }
 </script>
-
 <template>
-  <div class="app-container">
-    <h1 class="art-text">无人机任务信息</h1>
-    
-    <!-- 搜索和操作按钮 -->
-    <div class="search-card fade-in">
-      <div class="search-header">
-        <div class="search-title">
-          <el-icon><Search /></el-icon>
-          <span>任务搜索</span>
+  <div class="task-pool-page">
+    <div class="task-pool-page__bg" aria-hidden="true" />
+    <div class="task-pool-page__decor" aria-hidden="true">
+      <svg class="task-pool-page__lines" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <linearGradient id="task-pool-grad-blue" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#3b82f6" stop-opacity="0" />
+            <stop offset="40%" stop-color="#3b82f6" />
+            <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.3" />
+          </linearGradient>
+          <linearGradient id="task-pool-grad-cyan" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.2" />
+            <stop offset="50%" stop-color="#06b6d4" />
+            <stop offset="100%" stop-color="#34d399" stop-opacity="0.4" />
+          </linearGradient>
+          <linearGradient id="task-pool-grad-amber" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.3" />
+            <stop offset="60%" stop-color="#f59e0b" />
+            <stop offset="100%" stop-color="#fb923c" stop-opacity="0.2" />
+          </linearGradient>
+          <linearGradient id="task-pool-grad-violet" x1="0%" y1="50%" x2="100%" y2="50%">
+            <stop offset="0%" stop-color="#a78bfa" stop-opacity="0.15" />
+            <stop offset="50%" stop-color="#8b5cf6" />
+            <stop offset="100%" stop-color="#6366f1" stop-opacity="0.2" />
+          </linearGradient>
+          <linearGradient id="task-pool-grad-teal" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#34d399" stop-opacity="0.25" />
+            <stop offset="100%" stop-color="#14b8a6" />
+          </linearGradient>
+        </defs>
+        <path class="task-pool-line task-pool-line--1" d="M-40 120 Q 280 80, 520 200 T 980 90" />
+        <path class="task-pool-line task-pool-line--2" d="M200 900 Q 420 620, 680 740 T 1200 560" />
+        <path class="task-pool-line task-pool-line--3" d="M1100 -20 L 1320 280 L 1480 180" />
+        <path class="task-pool-line task-pool-line--4" d="M-60 520 C 180 420, 320 680, 560 580 S 920 480, 1180 620" />
+        <path class="task-pool-line task-pool-line--5" d="M820 900 L 960 680 L 1100 820 L 1280 640" />
+        <circle class="task-pool-dot task-pool-dot--1" cx="180" cy="140" r="4" />
+        <circle class="task-pool-dot task-pool-dot--2" cx="920" cy="320" r="3" />
+        <circle class="task-pool-dot task-pool-dot--3" cx="1240" cy="680" r="5" />
+      </svg>
+    </div>
+
+    <header class="task-pool-nav">
+      <div class="task-pool-nav__tabs">
+        <button
+          type="button"
+          class="task-pool-nav__tab"
+          :class="{ 'is-active': activeTab === 'pool' }"
+          @click="activeTab = 'pool'"
+        >
+          任务池
+        </button>
+        <button
+          type="button"
+          class="task-pool-nav__tab"
+          :class="{ 'is-active': activeTab === 'history' }"
+          @click="activeTab = 'history'"
+        >
+          历史记录
+        </button>
+        <button
+          type="button"
+          class="task-pool-nav__tab"
+          :class="{ 'is-active': activeTab === 'status' }"
+          @click="activeTab = 'status'"
+        >
+          系统状态
+        </button>
+      </div>
+
+      <div class="task-pool-nav__tools">
+        <el-input
+          v-model="query.taskName"
+          placeholder="搜索任务"
+          clearable
+          class="task-pool-nav__search"
+          @keyup.enter="searchTask"
+        />
+        <el-select
+          v-model="query.taskType"
+          placeholder="类型"
+          clearable
+          class="task-pool-nav__select"
+          @change="searchTask"
+        >
+          <el-option
+            v-for="option in taskTypeOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+        <el-button class="task-pool-nav__icon-btn" :icon="Search" @click="searchTask" />
+        <el-button class="task-pool-nav__icon-btn" @click="resetSearch">重置</el-button>
+        <el-button type="primary" class="task-pool-nav__primary" :icon="Plus" @click="openTaskDialog">
+          新建任务
+        </el-button>
+      </div>
+    </header>
+
+    <div v-if="runningTasks.length && activeTab !== 'status'" class="task-pool-alert">
+      <span class="task-pool-alert__dot" />
+      <span>{{ runningTasks.length }} 个任务正在执行中</span>
+      <span v-if="runningTasks[0]" class="task-pool-alert__meta">
+        最近：{{ runningTasks[0].taskName }}
+      </span>
+    </div>
+
+    <section v-if="activeTab === 'status'" class="task-pool-status">
+      <div class="task-pool-status__item">
+        <div class="task-pool-status__label">任务总数</div>
+        <div class="task-pool-status__value">{{ systemStats.total }}</div>
+      </div>
+      <div class="task-pool-status__item">
+        <div class="task-pool-status__label">待执行</div>
+        <div class="task-pool-status__value">{{ systemStats.pending }}</div>
+      </div>
+      <div class="task-pool-status__item">
+        <div class="task-pool-status__label">执行中</div>
+        <div class="task-pool-status__value">{{ systemStats.running }}</div>
+      </div>
+      <div class="task-pool-status__item">
+        <div class="task-pool-status__label">已完成</div>
+        <div class="task-pool-status__value">{{ systemStats.completed }}</div>
+      </div>
+    </section>
+
+    <section v-if="activeTab === 'status'" class="task-pool-insights">
+      <div class="task-pool-panel">
+        <div class="task-pool-panel__head">
+          <span class="task-pool-panel__title">任务完成率</span>
+        </div>
+        <div class="task-pool-progress-ring">
+          <div class="task-pool-progress-ring__value">{{ completionRate }}%</div>
+          <div class="task-pool-progress-ring__track">
+            <div class="task-pool-progress-ring__bar" :style="{ width: completionRate + '%' }" />
+          </div>
+          <p class="task-pool-progress-ring__desc">
+            已完成 {{ systemStats.completed }} / 总计 {{ systemStats.total }} 项任务
+          </p>
         </div>
       </div>
-      <div class="search-content">
-        <el-form :model="query" inline class="search-form">
-          <el-form-item label="任务名称" prop="taskName">
-            <el-input 
-              v-model="query.taskName" 
-              placeholder="请输入任务名称" 
-              clearable
-              class="search-input"
-            >
-              <template #prefix>
-                <el-icon><Edit /></el-icon>
-              </template>
-            </el-input>
-          </el-form-item>
-          
-          <el-form-item label="任务类型" prop="taskType">
-            <el-select 
-              v-model="query.taskType" 
-              placeholder="请选择任务类型" 
-              clearable
-              class="search-select"
-            >
-              <el-option 
-                v-for="option in taskTypeOptions" 
-                :key="option.value" 
-                :label="option.label" 
-                :value="option.value" 
-              />
-            </el-select>
-          </el-form-item>
-          
-          <el-form-item class="search-actions">
-            <el-button type="primary" icon="Search" class="btn-search" @click="searchTask">搜索</el-button>
-            <el-button icon="RefreshLeft" class="btn-reset" @click="resetSearch">重置</el-button>
-            <el-button type="primary" icon="Plus" class="btn-add" @click="openTaskDialog">发布任务</el-button>
-          </el-form-item>
-        </el-form>
-      </div>
-    </div>
-    
-    <!-- 任务列表 -->
-    <div class="task-list-card fade-in">
-      <div class="task-grid-container">
-        <div v-for="(task, index) in taskList" :key="task.taskId" class="task-card" :style="{ animationDelay: `${index * 0.1}s` }">
-          <!-- 卡片顶部渐变条 -->
-          <div class="task-card-header" :class="getUrgencyClass(task.urgency)">
-            <div class="task-card-id">#{{ task.taskId }}</div>
-            <div class="task-card-status">
-              <el-tag :type="getStatusType(task.status)" size="small" effect="dark">
-                {{ getStatusText(task.status) }}
-              </el-tag>
-              <el-tag
-                v-if="executionCountdowns[task.taskId]"
-                type="danger"
-                size="small"
-                effect="plain"
-                style="margin-left: 6px;"
-              >
-                {{ formatCountdown(executionCountdowns[task.taskId]) }}
-              </el-tag>
-            </div>
-          </div>
-          
-          <!-- 卡片主体内容 -->
-          <div class="task-card-body">
-            <!-- 任务名称和类型 -->
-            <div class="task-title-section">
-              <h3 class="task-card-title">{{ task.taskName }}</h3>
-              <el-tag :color="getTaskTypeColor(task.taskType)" size="small" round>
-                {{ task.taskType }}
-              </el-tag>
-            </div>
-            
-            <!-- 路线信息 -->
-            <div class="task-route-section">
-              <div class="route-item">
-                <div class="route-dot start-dot"></div>
-                <span class="route-text">{{ task.startLocation }}</span>
-              </div>
-              <div class="route-line"></div>
-              <div class="route-item">
-                <div class="route-dot end-dot"></div>
-                <span class="route-text">{{ task.endLocation }}</span>
-              </div>
-            </div>
-            
-            <!-- 任务参数 -->
-            <div class="task-params-grid">
-              <div class="param-item">
-                <div class="param-icon">📏</div>
-                <div class="param-content">
-                  <div class="param-label">距离</div>
-                  <div class="param-value">{{ task.maxDistance?.toFixed(2) || '-' }} km</div>
-                </div>
-              </div>
-              
-              <div class="param-item">
-                <div class="param-icon">⏱️</div>
-                <div class="param-content">
-                  <div class="param-label">时间</div>
-                  <div class="param-value">{{ task.estimatedTime || '-' }} min</div>
-                </div>
-              </div>
-              
-              <div class="param-item">
-                <div class="param-icon">🔋</div>
-                <div class="param-content">
-                  <div class="param-label">载重</div>
-                  <div class="param-value">{{ task.requiredLoad?.toFixed(1) || '-' }} kg</div>
-                </div>
-              </div>
-              
-              <div class="param-item">
-                <div class="param-icon">🚨</div>
-                <div class="param-content">
-                  <div class="param-label">紧急度</div>
-                  <div class="param-value">
-                    <el-tag :type="getUrgencyType(task.urgency)" size="small">
-                      {{ getUrgencyText(task.urgency) }}
-                    </el-tag>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <!-- 无人机信息 -->
-            <div v-if="task.uavModel" class="uav-info-section">
-              <div class="uav-label">🛸 执行无人机</div>
-              <div class="uav-model">{{ task.uavModel }}</div>
-            </div>
-            
-            <!-- 任务描述 -->
-            <div v-if="task.description && task.description !== '无'" class="task-description">
-              <el-tooltip :content="task.description" placement="top">
-                <div class="description-preview">
-                  <el-icon><Document /></el-icon>
-                  <span>{{ truncateText(task.description, 20) }}</span>
-                </div>
-              </el-tooltip>
-            </div>
-          </div>
-          
-          <!-- 卡片底部操作区 -->
-          <div class="task-card-footer">
-            <div class="task-time">
-              <el-icon><Clock /></el-icon>
-              <span>{{ formatDate(task.createTime) }}</span>
-            </div>
-            <div class="task-actions">
-              <el-button
-                v-if="isTaskExecuting(task)"
-                type="warning"
-                size="small"
-                @click="terminateTask(task)"
-              >
-                终止任务
-              </el-button>
-              <el-button type="primary" size="small" circle @click="handleUpdate(task)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
-            <el-button type="info" size="small" circle @click="goToTaskPlanning(task.taskId)">
-              <el-icon><VideoCamera /></el-icon>
-            </el-button>
-              <el-button type="danger" size="small" circle @click="handleDelete(task)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
-            </div>
-          </div>
+      <div class="task-pool-panel">
+        <div class="task-pool-panel__head">
+          <span class="task-pool-panel__title">任务类型分布</span>
         </div>
+        <ul v-if="typeDistribution.length" class="task-pool-type-list">
+          <li v-for="item in typeDistribution" :key="item.name" class="task-pool-type-list__item">
+            <span class="task-pool-type-list__name">{{ item.name }}</span>
+            <div class="task-pool-type-list__bar-wrap">
+              <div class="task-pool-type-list__bar" :style="{ width: item.percent + '%' }" />
+            </div>
+            <span class="task-pool-type-list__count">{{ item.count }}</span>
+          </li>
+        </ul>
+        <div v-else class="task-pool-empty task-pool-empty--inline">暂无类型数据</div>
       </div>
-      
-      <!-- 空状态提示 -->
-      <el-empty v-if="taskList.length === 0" description="暂无任务数据" />
-    </div>
-    
-    <!-- 分页 -->
-    <div class="fade-in" style="margin-top: 20px;">
+    </section>
+
+    <section v-if="activeTab === 'status'" class="task-pool-status task-pool-status--secondary">
+      <div class="task-pool-status__item">
+        <div class="task-pool-status__label">已取消</div>
+        <div class="task-pool-status__value">{{ systemStats.cancelled }}</div>
+      </div>
+      <div class="task-pool-status__item">
+        <div class="task-pool-status__label">当前页任务</div>
+        <div class="task-pool-status__value">{{ taskList.length }}</div>
+      </div>
+      <div class="task-pool-status__item">
+        <div class="task-pool-status__label">任务类型数</div>
+        <div class="task-pool-status__value">{{ typeDistribution.length }}</div>
+      </div>
+      <div class="task-pool-status__item">
+        <div class="task-pool-status__label">系统时间</div>
+        <div class="task-pool-status__value task-pool-status__value--sm">{{ pageTime.split(' ')[1] || '—' }}</div>
+      </div>
+    </section>
+
+    <section v-else class="task-pool-stage">
+      <template v-if="filteredTasks.length">
+        <div class="task-pool-carousel-shell">
+          <button type="button" class="task-pool-carousel-arrow" aria-label="上一项" @click="prevCarousel">
+            <el-icon><ArrowLeft /></el-icon>
+          </button>
+
+          <div ref="carouselRef" class="task-pool-carousel" @scroll="onCarouselScroll">
+            <article
+              v-for="(task, index) in filteredTasks"
+              :key="task.taskId"
+              class="task-pool-card"
+              :class="{ 'is-active': index === carouselIndex }"
+              @click="scrollCarouselTo(index)"
+            >
+              <div class="task-pool-card__head">
+                <div class="task-pool-card__head-main">
+                  <h3 class="task-pool-card__name">{{ task.taskName }}</h3>
+                  <span
+                    class="task-pool-card__urgency"
+                    :class="'task-pool-card__urgency--' + (task.urgency || 1)"
+                  >
+                    {{ getUrgencyText(task.urgency || 1) }}
+                  </span>
+                </div>
+                <span class="task-pool-card__type">{{ task.taskType }}</span>
+              </div>
+
+              <div class="task-pool-card__metrics">
+                <div class="task-pool-metric">
+                  <div class="task-pool-metric__label">航点数量</div>
+                  <div class="task-pool-metric__value">{{ estimateWaypoints(task) }}</div>
+                </div>
+                <div class="task-pool-metric">
+                  <div class="task-pool-metric__label">预估耗电</div>
+                  <div class="task-pool-metric__value">{{ estimatePowerPercent(task) }}%</div>
+                </div>
+                <div class="task-pool-metric">
+                  <div class="task-pool-metric__label">航程</div>
+                  <div class="task-pool-metric__value">{{ task.maxDistance || 0 }} km</div>
+                </div>
+                <div class="task-pool-metric">
+                  <div class="task-pool-metric__label">预计时长</div>
+                  <div class="task-pool-metric__value">{{ task.estimatedTime || 0 }} min</div>
+                </div>
+              </div>
+
+              <div class="task-pool-card__power">
+                <span class="task-pool-card__power-label">电量消耗预估</span>
+                <div class="task-pool-card__power-track">
+                  <div
+                    class="task-pool-card__power-bar"
+                    :style="{ width: Math.min(estimatePowerPercent(task), 100) + '%' }"
+                  />
+                </div>
+              </div>
+
+              <div class="task-pool-card__route">
+                {{ task.startLocation || '—' }} → {{ task.endLocation || '—' }}
+              </div>
+
+              <div class="task-pool-card__actions">
+                <el-button type="primary" class="task-pool-card__publish" @click.stop="publishTask(task)">
+                  发布任务
+                </el-button>
+                <div class="task-pool-card__links">
+                  <el-button
+                    v-if="isTaskExecuting(task)"
+                    link
+                    type="warning"
+                    @click.stop="terminateTask(task)"
+                  >
+                    终止
+                  </el-button>
+                  <el-button link type="primary" :icon="Edit" @click.stop="handleUpdate(task)" />
+                  <el-button link type="danger" :icon="Delete" @click.stop="handleDelete(task)" />
+                </div>
+              </div>
+
+              <div class="task-pool-card__status">
+                <el-tag :type="getStatusType(task.status)" size="small" effect="plain">
+                  {{ getStatusText(task.status) }}
+                </el-tag>
+                <span v-if="executionCountdowns[task.taskId]">
+                  剩余 {{ formatCountdown(executionCountdowns[task.taskId]) }}
+                </span>
+              </div>
+            </article>
+          </div>
+
+          <button type="button" class="task-pool-carousel-arrow" aria-label="下一项" @click="nextCarousel">
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+        </div>
+
+        <div class="task-pool-dots">
+          <button
+            v-for="(_, index) in filteredTasks"
+            :key="index"
+            type="button"
+            class="task-pool-dots__item"
+            :class="{ 'is-active': index === carouselIndex }"
+            :aria-label="'第 ' + (index + 1) + ' 项'"
+            @click="scrollCarouselTo(index)"
+          />
+        </div>
+
+        <section v-if="activeTask" class="task-pool-focus">
+          <div class="task-pool-focus__main">
+            <div class="task-pool-focus__badge">当前选中</div>
+            <h3 class="task-pool-focus__title">{{ activeTask.taskName }}</h3>
+            <p class="task-pool-focus__route">
+              {{ activeTask.startLocation || '—' }} → {{ activeTask.endLocation || '—' }}
+            </p>
+            <div class="task-pool-focus__tags">
+              <el-tag size="small" effect="plain">{{ activeTask.taskType }}</el-tag>
+              <el-tag :type="getStatusType(activeTask.status)" size="small" effect="plain">
+                {{ getStatusText(activeTask.status) }}
+              </el-tag>
+              <el-tag :type="getUrgencyType(activeTask.urgency || 1)" size="small" effect="plain">
+                {{ getUrgencyText(activeTask.urgency || 1) }}
+              </el-tag>
+            </div>
+          </div>
+          <div class="task-pool-focus__stats">
+            <div class="task-pool-focus__stat">
+              <span class="task-pool-focus__stat-label">航点</span>
+              <span class="task-pool-focus__stat-value">{{ estimateWaypoints(activeTask) }}</span>
+            </div>
+            <div class="task-pool-focus__stat">
+              <span class="task-pool-focus__stat-label">航程</span>
+              <span class="task-pool-focus__stat-value">{{ activeTask.maxDistance || 0 }} km</span>
+            </div>
+            <div class="task-pool-focus__stat">
+              <span class="task-pool-focus__stat-label">时长</span>
+              <span class="task-pool-focus__stat-value">{{ activeTask.estimatedTime || 0 }} min</span>
+            </div>
+            <div class="task-pool-focus__stat">
+              <span class="task-pool-focus__stat-label">耗电</span>
+              <span class="task-pool-focus__stat-value">{{ estimatePowerPercent(activeTask) }}%</span>
+            </div>
+          </div>
+          <div class="task-pool-focus__actions">
+            <el-button type="primary" @click="publishTask(activeTask)">发布任务</el-button>
+            <el-button @click="handleUpdate(activeTask)">编辑</el-button>
+          </div>
+        </section>
+
+        <section class="task-pool-insights">
+          <div class="task-pool-panel">
+            <div class="task-pool-panel__head">
+              <span class="task-pool-panel__title">类型分布</span>
+              <span class="task-pool-panel__meta">{{ typeDistribution.length }} 种</span>
+            </div>
+            <ul v-if="typeDistribution.length" class="task-pool-type-list">
+              <li v-for="item in typeDistribution" :key="item.name" class="task-pool-type-list__item">
+                <span class="task-pool-type-list__name">{{ item.name }}</span>
+                <div class="task-pool-type-list__bar-wrap">
+                  <div class="task-pool-type-list__bar" :style="{ width: item.percent + '%' }" />
+                </div>
+                <span class="task-pool-type-list__count">{{ item.count }}</span>
+              </li>
+            </ul>
+            <div v-else class="task-pool-empty task-pool-empty--inline">暂无数据</div>
+          </div>
+          <div class="task-pool-panel">
+            <div class="task-pool-panel__head">
+              <span class="task-pool-panel__title">快速浏览</span>
+              <span class="task-pool-panel__meta">共 {{ filteredTasks.length }} 项</span>
+            </div>
+            <ul class="task-pool-quick-list">
+              <li
+                v-for="(task, index) in filteredTasks.slice(0, 5)"
+                :key="task.taskId"
+                class="task-pool-quick-list__item"
+                :class="{ 'is-active': index === carouselIndex }"
+                @click="scrollCarouselTo(index)"
+              >
+                <span class="task-pool-quick-list__index">{{ index + 1 }}</span>
+                <div class="task-pool-quick-list__body">
+                  <span class="task-pool-quick-list__name">{{ task.taskName }}</span>
+                  <span class="task-pool-quick-list__meta">
+                    {{ task.taskType }} · {{ task.maxDistance || 0 }} km
+                  </span>
+                </div>
+                <el-tag :type="getStatusType(task.status)" size="small" effect="plain">
+                  {{ getStatusText(task.status) }}
+                </el-tag>
+              </li>
+            </ul>
+          </div>
+        </section>
+      </template>
+
+      <div v-else class="task-pool-empty">
+        {{ activeTab === 'history' ? '暂无历史任务' : '暂无待处理任务，点击「新建任务」开始' }}
+      </div>
+    </section>
+
+    <div v-if="activeTab !== 'status'" class="task-pool-footer">
       <pagination
-        v-model:current-page="query.pageNum"
-        v-model:page-size="query.pageSize"
-        :page-sizes="[5, 10, 20, 50]"
-        layout="total, sizes, prev, pager, next, jumper"
+        v-model:page="query.pageNum"
+        v-model:limit="query.pageSize"
+        :page-sizes="[6, 12, 24, 48]"
+        layout="total, sizes, prev, pager, next"
         :total="total"
-        @size-change="getTaskList"
-        @current-change="getTaskList"
+        @pagination="getTaskList"
       />
     </div>
-    
-    <!-- 发布任务对话框 -->
+
     <el-dialog
       v-model="taskDialogVisible"
       :title="title"
       width="560px"
-      class="task-dialog-el"
+      class="task-pool-dialog"
       :close-on-click-modal="false"
       destroy-on-close
     >
-      <div class="task-form-scroll-wrapper ultra-compact">
-        <el-alert
-          v-if="taskForm.taskId && taskForm.status === 3"
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 12px;"
-          title="该任务已完成。保存修改后状态将重置为「待执行」，可重新规划并执行。"
-        />
-        <div class="form-section-title compact">
-          <el-icon><Document /></el-icon>
-          <span>基本信息</span>
-        </div>
-        <div class="task-form ultra-compact">
-          <div class="form-row ultra-tight">
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <el-icon><Edit /></el-icon>
-                任务名称
-              </label>
-              <el-input v-model="taskForm.taskName" placeholder="请输入任务名称" size="small" />
-            </div>
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <el-icon><List /></el-icon>
-                任务类型
-              </label>
-              <el-select v-model="taskForm.taskType" placeholder="请选择任务类型" size="small" style="width: 100%;">
-                <el-option 
-                  v-for="option in taskTypeOptions" 
-                  :key="option.value" 
-                  :label="option.label" 
-                  :value="option.value" 
-                />
-              </el-select>
-            </div>
-          </div>
-          <div class="form-row ultra-tight">
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <el-icon><Clock /></el-icon>
-                任务状态
-              </label>
-              <el-select v-model="taskForm.status" placeholder="请选择任务状态" size="small" style="width: 100%;">
-                <el-option 
-                  v-for="option in taskStatusOptions" 
-                  :key="option.value" 
-                  :label="option.label" 
-                  :value="option.value" 
-                />
-              </el-select>
-            </div>
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <el-icon><Bell /></el-icon>
-                紧急程度
-              </label>
-              <el-select v-model="taskForm.urgency" placeholder="请选择紧急程度" size="small" style="width: 100%;">
-                <el-option label="普通" :value="1" />
-                <el-option label="紧急" :value="2" />
-                <el-option label="非常紧急" :value="3" />
-              </el-select>
-            </div>
-          </div>
-        </div>
+      <el-alert
+        v-if="taskForm.taskId && taskForm.status === 3"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px;"
+        title="该任务已完成。保存后状态将重置为「待执行」。"
+      />
 
-        <div class="form-section-title compact">
-          <el-icon><Location /></el-icon>
-          <span>路线信息</span>
-        </div>
-        <div class="task-form ultra-compact">
-          <div class="form-row ultra-tight">
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <div class="location-dot start"></div>
-                起始地点
-              </label>
-              <el-input v-model="taskForm.startLocation" placeholder="请输入起始地点" size="small" />
-            </div>
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <div class="location-dot end"></div>
-                终点
-              </label>
-              <el-input v-model="taskForm.endLocation" placeholder="请输入终点" size="small" />
-            </div>
+      <div class="task-pool-form-section">
+        <div class="task-pool-form-section__title">基本信息</div>
+        <div class="task-pool-form-grid">
+          <div class="task-pool-form-item">
+            <label>任务名称</label>
+            <el-input v-model="taskForm.taskName" placeholder="请输入任务名称" size="small" />
           </div>
-        </div>
-
-        <div class="form-section-title compact">
-          <el-icon><Setting /></el-icon>
-          <span>任务参数</span>
-        </div>
-        <div class="task-form ultra-compact">
-          <div class="form-row ultra-tight">
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <el-icon><ScaleToOriginal /></el-icon>
-                最大距离 (km)
-              </label>
-              <el-input-number v-model="taskForm.maxDistance" :min="0" :precision="2" placeholder="自动计算" readonly class="readonly-input" controls-position="right" size="small" style="width: 100%;" />
-            </div>
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <el-icon><Timer /></el-icon>
-                预计时间 (min)
-              </label>
-              <el-input-number v-model="taskForm.estimatedTime" :min="0" :precision="0" placeholder="自动估算" readonly class="readonly-input" controls-position="right" size="small" style="width: 100%;" />
-            </div>
-            <div class="form-item">
-              <label class="form-label ultra-small">
-                <el-icon><Loading /></el-icon>
-                所需载重 (kg)
-              </label>
-              <el-input-number v-model="taskForm.requiredLoad" :min="0" :max="50" :precision="2" placeholder="0-50" controls-position="right" size="small" style="width: 100%;" />
-            </div>
+          <div class="task-pool-form-item">
+            <label>任务类型</label>
+            <el-select v-model="taskForm.taskType" placeholder="请选择" size="small" style="width: 100%;">
+              <el-option v-for="option in taskTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </el-select>
           </div>
-          <div class="form-row ultra-tight">
-            <div class="form-item full-width">
-              <label class="form-label ultra-small">
-                <el-icon><Document /></el-icon>
-                任务描述
-              </label>
-              <el-input v-model="taskForm.description" type="textarea" :rows="2" placeholder="请输入任务描述" size="small" />
-            </div>
+          <div class="task-pool-form-item">
+            <label>任务状态</label>
+            <el-select v-model="taskForm.status" size="small" style="width: 100%;">
+              <el-option v-for="option in taskStatusOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </el-select>
           </div>
-        </div>
-
-        <div class="form-section-title compact">
-          <el-icon><MapLocation /></el-icon>
-          <span>地图与无人机</span>
-        </div>
-        <div class="task-form ultra-compact">
-          <div class="form-row ultra-tight">
-            <div class="form-item full-width">
-              <label class="form-label ultra-small">地图预览</label>
-              <div class="map-container super-compact" ref="mapContainer"></div>
-              <el-button type="primary" @click="calculatePathAndGetUavs" class="btn-calculate super-compact" style="margin-top: 6px; width: 100%;">
-                <el-icon><RefreshRight /></el-icon>
-                计算路径并获取可用无人机
-              </el-button>
-            </div>
-          </div>
-          <div class="form-row ultra-tight">
-            <div class="form-item full-width">
-              <label class="form-label ultra-small">
-                <el-icon><VideoCamera /></el-icon>
-                选择无人机
-              </label>
-              <el-select v-model="taskForm.uavId" placeholder="推荐选择无人机" size="small" style="width: 100%;" class="uav-select">
-                <el-option 
-                  v-for="uav in availableUavs" 
-                  :key="uav.uavId" 
-                  :label="uav.uavModel" 
-                  :value="uav.uavId" 
-                >
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>{{ uav.uavModel }}</span>
-                    <el-tag v-if="availableUavs.length > 0 && uav === availableUavs[0]" type="success" size="small" effect="dark">
-                      推荐
-                    </el-tag>
-                  </div>
-                </el-option>
-              </el-select>
-              <p v-if="availableUavs.length === 0" class="hint-text ultra-small">
-                <el-icon><InfoFilled /></el-icon>
-                请先计算路径以获取可用无人机
-              </p>
-            </div>
+          <div class="task-pool-form-item">
+            <label>紧急程度</label>
+            <el-select v-model="taskForm.urgency" size="small" style="width: 100%;">
+              <el-option label="普通" :value="1" />
+              <el-option label="紧急" :value="2" />
+              <el-option label="非常紧急" :value="3" />
+            </el-select>
           </div>
         </div>
       </div>
-      <template #footer>
-        <div class="dialog-footer">
-          <el-button class="btn-cancel" @click="taskDialogVisible = false">
-            <el-icon><Close /></el-icon>
-            取消
-          </el-button>
-          <el-button type="primary" class="btn-submit" @click="submitTask">
-            <el-icon><Check /></el-icon>
-            发布任务
+
+      <div class="task-pool-form-section">
+        <div class="task-pool-form-section__title">路线信息</div>
+        <div class="task-pool-form-grid">
+          <div class="task-pool-form-item">
+            <label>起始地点</label>
+            <el-input v-model="taskForm.startLocation" placeholder="起始地点" size="small" />
+          </div>
+          <div class="task-pool-form-item">
+            <label>终点</label>
+            <el-input v-model="taskForm.endLocation" placeholder="终点" size="small" />
+          </div>
+        </div>
+      </div>
+
+      <div class="task-pool-form-section">
+        <div class="task-pool-form-section__title">任务参数</div>
+        <div class="task-pool-form-grid">
+          <div class="task-pool-form-item">
+            <label>最大距离 (km)</label>
+            <el-input-number v-model="taskForm.maxDistance" :min="0" :precision="2" readonly size="small" style="width: 100%;" />
+          </div>
+          <div class="task-pool-form-item">
+            <label>预计时间 (min)</label>
+            <el-input-number v-model="taskForm.estimatedTime" :min="0" readonly size="small" style="width: 100%;" />
+          </div>
+          <div class="task-pool-form-item">
+            <label>所需载重 (kg)</label>
+            <el-input-number v-model="taskForm.requiredLoad" :min="0" :max="50" :precision="2" size="small" style="width: 100%;" />
+          </div>
+          <div class="task-pool-form-item full">
+            <label>任务描述</label>
+            <el-input v-model="taskForm.description" type="textarea" :rows="2" size="small" />
+          </div>
+        </div>
+      </div>
+
+      <div class="task-pool-form-section">
+        <div class="task-pool-form-section__title">地图与无人机</div>
+        <div class="task-pool-form-item full">
+          <label>地图预览</label>
+          <div class="task-pool-map" ref="mapContainer" />
+          <el-button type="primary" size="small" style="width: 100%; margin-top: 8px;" @click="calculatePathAndGetUavs">
+            计算路径并匹配无人机
           </el-button>
         </div>
+        <div class="task-pool-form-item full" style="margin-top: 12px;">
+          <label>选择无人机</label>
+          <el-select v-model="taskForm.uavId" placeholder="推荐选择无人机" size="small" style="width: 100%;">
+            <el-option
+              v-for="uav in availableUavs"
+              :key="uav.uavId"
+              :label="`${uav.uavModel}（剩余电量 ${uav.uavRemainingBattery ?? 100}%）`"
+              :value="uav.uavId"
+            />
+          </el-select>
+        </div>
+      </div>
+
+      <template #footer>
+        <el-button @click="taskDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitTask">保存并发布</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
-<style scoped>
-/* 搜索卡片 - 现代渐变风格 */
-.search-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.25);
-  margin-bottom: 16px;
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.search-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 48px rgba(102, 126, 234, 0.35);
-}
-
-.search-header {
-  padding: 16px 24px;
-  background: rgba(255, 255, 255, 0.15);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.search-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 16px;
-  font-weight: 600;
-  color: #ffffff;
-  letter-spacing: 0.5px;
-}
-
-.search-title .el-icon {
-  font-size: 18px;
-}
-
-.search-content {
-  padding: 20px 24px;
-  background: #ffffff;
-}
-
-.search-form {
-  width: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  align-items: flex-end;
-}
-
-.search-form .el-form-item {
-  margin-bottom: 0;
-}
-
-.search-input,
-.search-select {
-  width: 220px;
-}
-
-.search-input :deep(.el-input__wrapper),
-.search-select :deep(.el-select__wrapper) {
-  border-radius: 10px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  transition: all 0.3s ease;
-}
-
-.search-input :deep(.el-input__wrapper):hover,
-.search-select :deep(.el-select__wrapper):hover {
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.15);
-}
-
-.search-input :deep(.el-input__wrapper.is-focus),
-.search-select :deep(.el-select__wrapper.is-focus) {
-  box-shadow: 0 4px 16px rgba(102, 126, 234, 0.25);
-}
-
-.search-actions {
-  display: flex;
-  gap: 10px;
-  margin-left: auto;
-}
-
-.btn-search {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border: none;
-  border-radius: 10px;
-  padding: 10px 24px;
-  font-weight: 600;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.btn-search:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-}
-
-.btn-reset {
-  border-radius: 10px;
-  padding: 10px 24px;
-  font-weight: 600;
-  border: 1px solid #e2e8f0;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.btn-reset:hover {
-  border-color: #667eea;
-  color: #667eea;
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.15);
-}
-
-.btn-add {
-  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-  border: none;
-  border-radius: 10px;
-  padding: 10px 24px;
-  font-weight: 600;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.btn-add:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
-}
-
-/* 任务列表卡片 */
-.task-list-card {
-  background: transparent;
-}
-
-/* ========== 任务卡片网格布局 ========== */
-.task-grid-container {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
-  gap: 24px;
-  padding: 10px;
-}
-
-/* ========== 任务卡片主体 ========== */
-.task-card {
-  background: #ffffff;
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-  animation: slideInUp 0.6s ease-out forwards;
-  cursor: pointer;
-  border: 2px solid transparent;
-}
-
-.task-card:hover {
-  transform: translateY(-8px) scale(1.02);
-  box-shadow: 0 12px 40px rgba(77, 79, 195, 0.2);
-  border-color: #4D4FC3;
-}
-
-@keyframes slideInUp {
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* ========== 卡片顶部渐变条 ========== */
-.task-card-header {
-  padding: 16px 20px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  color: white;
-  position: relative;
-  overflow: hidden;
-}
-
-/* 紧急度渐变背景 */
-.urgency-high {
-  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a6f 100%);
-}
-
-.urgency-medium {
-  background: linear-gradient(135deg, #ffa726 0%, #fb8c00 100%);
-}
-
-.urgency-low {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-}
-
-.task-card-id {
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-}
-
-/* ========== 卡片主体内容 ========== */
-.task-card-body {
-  padding: 20px;
-}
-
-/* 任务标题区域 */
-.task-title-section {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-  gap: 12px;
-}
-
-.task-card-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #2d3748;
-  margin: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ========== 路线信息区域 ========== */
-.task-route-section {
-  background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
-  border-radius: 12px;
-  padding: 16px;
-  margin-bottom: 16px;
-  position: relative;
-}
-
-.route-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.route-item:last-child {
-  margin-bottom: 0;
-}
-
-.route-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.start-dot {
-  background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
-  box-shadow: 0 0 12px rgba(72, 187, 120, 0.5);
-}
-
-.end-dot {
-  background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
-  box-shadow: 0 0 12px rgba(245, 101, 101, 0.5);
-}
-
-.route-line {
-  width: 2px;
-  height: 16px;
-  background: linear-gradient(to bottom, #48bb78, #f56565);
-  margin-left: 5px;
-  margin-bottom: 8px;
-}
-
-.route-text {
-  font-size: 13px;
-  color: #4a5568;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-/* ========== 任务参数网格 ========== */
-.task-params-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.param-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px;
-  background: linear-gradient(135deg, #fff5f5 0%, #fffafa 100%);
-  border-radius: 10px;
-  transition: all 0.3s ease;
-}
-
-.param-item:hover {
-  background: linear-gradient(135deg, #ffe4e6 0%, #fef2f2 100%);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-}
-
-.param-icon {
-  font-size: 20px;
-  line-height: 1;
-}
-
-.param-content {
-  flex: 1;
-}
-
-.param-label {
-  font-size: 11px;
-  color: #718096;
-  margin-bottom: 4px;
-  font-weight: 500;
-}
-
-.param-value {
-  font-size: 15px;
-  font-weight: 700;
-  color: #2d3748;
-}
-
-/* ========== 无人机信息区域 ========== */
-.uav-info-section {
-  background: linear-gradient(135deg, #e6fffa 0%, #b2f5ea 100%);
-  border-left: 4px solid #38b2ac;
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin-bottom: 12px;
-}
-
-.uav-label {
-  font-size: 12px;
-  color: #2c7a7b;
-  margin-bottom: 6px;
-  font-weight: 600;
-}
-
-.uav-model {
-  font-size: 15px;
-  font-weight: 700;
-  color: #234e52;
-}
-
-/* ========== 任务描述区域 ========== */
-.task-description {
-  margin-top: 12px;
-}
-
-.description-preview {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: #f7fafc;
-  border-radius: 8px;
-  font-size: 12px;
-  color: #718096;
-  cursor: help;
-  transition: all 0.3s ease;
-}
-
-.description-preview:hover {
-  background: #edf2f7;
-  color: #4a5568;
-}
-
-/* ========== 卡片底部操作区 ========== */
-.task-card-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 14px 20px;
-  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-  border-top: 1px solid #e2e8f0;
-}
-
-.task-time {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: #718096;
-  font-weight: 500;
-}
-
-.task-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.task-actions .el-button {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.task-actions .el-button:hover {
-  transform: scale(1.2) rotate(15deg);
-}
-
-/* ========== 对话框样式美化 - Element Plus ========== */
-.task-dialog-el :deep(.el-dialog) {
-  border-radius: 16px !important;
-  overflow: hidden;
-}
-
-.task-dialog-el :deep(.el-dialog__header) {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  padding: 16px 18px !important;
-  border-bottom: none;
-  margin-right: 0 !important;
-  border-radius: 16px 16px 0 0;
-}
-
-.task-dialog-el :deep(.el-dialog__title) {
-  color: #ffffff !important;
-  font-size: 17px !important;
-  font-weight: 600 !important;
-}
-
-.task-dialog-el :deep(.el-dialog__headerbtn .el-dialog__close) {
-  color: #ffffff !important;
-  transition: all 0.3s ease;
-}
-
-.task-dialog-el :deep(.el-dialog__headerbtn .el-dialog__close:hover) {
-  color: #f093fb !important;
-}
-
-.task-dialog-el :deep(.el-dialog__body) {
-  padding: 0 !important;
-  background: #f8f9fa;
-  max-height: calc(60vh - 140px);
-  overflow-y: auto;
-}
-
-.task-dialog-el :deep(.el-dialog__footer) {
-  padding: 12px 18px !important;
-  background: #ffffff;
-  border-top: 1px solid #e2e8f0;
-  border-radius: 0 0 16px 16px;
-}
-
-/* 自定义滚动条 */
-.task-dialog-el :deep(.el-dialog__body::-webkit-scrollbar) {
-  width: 6px;
-}
-
-.task-dialog-el :deep(.el-dialog__body::-webkit-scrollbar-thumb) {
-  background: rgba(102, 126, 234, 0.3);
-  border-radius: 3px;
-}
-
-.task-dialog-el :deep(.el-dialog__body::-webkit-scrollbar-thumb:hover) {
-  background: rgba(102, 126, 234, 0.5);
-}
-
-/* 对话框内容包装器 - 关键修复 */
-.task-form-scroll-wrapper {
-  padding: 14px;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.task-form-scroll-wrapper.ultra-compact {
-  padding: 12px;
-}
-
-/* 表单包装器 */
-.task-form-wrapper {
-  padding: 16px;
-}
-
-/* 分组标题 */
-.form-section-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  margin: 10px -12px 4px;
-  background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
-  border-left: 3px solid #667eea;
-  color: #2d3748;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.form-section-title.compact {
-  padding: 7px 10px;
-  margin: 8px -10px 3px;
-  font-size: 12px;
-}
-
-.form-section-title .el-icon {
-  color: #667eea;
-  font-size: 16px;
-}
-
-/* 任务表单 */
-.task-form {
-  background: #ffffff;
-  border-radius: 8px;
-  padding: 14px;
-  margin-bottom: 10px;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
-}
-
-.task-form.ultra-compact {
-  padding: 12px;
-  margin-bottom: 8px;
-}
-
-.form-row {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.form-row.tight {
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.form-row.ultra-tight {
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-.form-row:last-child {
-  margin-bottom: 0;
-}
-
-.form-item {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-.form-item.full-width {
-  flex: 1 1 100%;
-}
-
-/* 表单标签 */
-.form-label {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 5px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #4a5568;
-}
-
-.form-label.ultra-small {
-  gap: 4px;
-  margin-bottom: 4px;
-  font-size: 11px;
-}
-
-.form-label .el-icon {
-  color: #667eea;
-  font-size: 14px;
-}
-
-/* 位置圆点 */
-.location-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.location-dot.start {
-  background: linear-gradient(135deg, #48bb78 0%, #38a169 100%);
-  box-shadow: 0 0 8px rgba(72, 187, 120, 0.4);
-}
-
-.location-dot.end {
-  background: linear-gradient(135deg, #f56565 0%, #e53e3e 100%);
-  box-shadow: 0 0 8px rgba(245, 101, 101, 0.4);
-}
-
-/* 输入框样式 */
-.vxe-input,
-.vxe-select,
-.vxe-textarea {
-  border-radius: 6px !important;
-  border: 1px solid #e2e8f0 !important;
-  transition: all 0.3s ease;
-}
-
-.vxe-input:hover,
-.vxe-select:hover,
-.vxe-textarea:hover {
-  border-color: #667eea !important;
-  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
-}
-
-.vxe-input:focus,
-.vxe-select:focus,
-.vxe-textarea:focus {
-  border-color: #667eea !important;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
-}
-
-.readonly-input {
-  background: #f7fafc !important;
-  cursor: not-allowed;
-}
-
-/* 地图容器 */
-.map-container {
-  width: 100%;
-  height: 220px;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 2px solid #e2e8f0;
-  margin-bottom: 8px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.06);
-}
-
-.map-container.compact {
-  height: 180px;
-}
-
-.map-container.super-compact {
-  height: 160px;
-}
-
-/* 计算路径按钮 */
-.btn-calculate {
-  width: 100%;
-  height: 36px;
-  border-radius: 6px;
-  font-weight: 600;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-  border: none !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.btn-calculate.compact {
-  height: 34px;
-  font-size: 11px;
-}
-
-.btn-calculate.super-compact {
-  height: 32px;
-  font-size: 11px;
-}
-
-.btn-calculate:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-}
-
-/* 无人机选择框 */
-.uav-select {
-  margin-bottom: 8px;
-}
-
-/* 提示文本 */
-.hint-text {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 10px;
-  background: #fff5f5;
-  border-radius: 6px;
-  color: #999;
-  font-size: 11px;
-  margin-top: 6px;
-  border: 1px dashed #feb2b2;
-}
-
-.hint-text.ultra-small {
-  padding: 5px 8px;
-  font-size: 10px;
-  margin-top: 4px;
-}
-
-.hint-text .el-icon {
-  color: #fc8181;
-}
-
-/* 底部按钮 */
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.btn-cancel {
-  min-width: 80px;
-  height: 34px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 13px;
-  border: 1px solid #e2e8f0 !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.btn-cancel:hover {
-  border-color: #667eea !important;
-  color: #667eea !important;
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.15);
-}
-
-.btn-submit {
-  min-width: 100px;
-  height: 34px;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 13px;
-  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
-  border: none !important;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.btn-submit:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(245, 87, 108, 0.4);
-}
-
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .form-row {
-    flex-direction: column;
-  }
-  
-  .task-dialog :deep(.vxe-modal) {
-    width: 95% !important;
-  }
-}
-
-/* 操作按钮样式 */
-.action-button {
-  border-radius: 8px;
-  font-weight: 500;
-  transition: var(--transition);
-}
-
-.action-button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.action-button.primary:hover {
-  box-shadow: 0 4px 12px rgba(77, 79, 200, 0.3);
-}
-
-/* 对话框footer */
-.dialog-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.dialog-footer.ultra-compact {
-  gap: 8px;
-  padding-top: 8px;
-}
-
-/* 动画效果 */
-.fade-in {
-  animation: fadeIn 0.5s ease-in-out;
-}
-
-.fade-in:nth-child(2) {
-  animation-delay: 0.1s;
-}
-
-.fade-in:nth-child(3) {
-  animation-delay: 0.2s;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .form-row {
-    flex-direction: column;
-  }
-  
-  .el-row {
-    flex-direction: column;
-  }
-  
-  .el-col {
-    width: 100% !important;
-  }
-  
-  .map-container {
-    height: 300px;
-  }
-  
-  .action-button {
-    margin: 5px 0;
-  }
-}
-</style>
+<style src="@/assets/styles/task-pool.css"></style>

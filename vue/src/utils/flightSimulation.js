@@ -62,12 +62,13 @@ export const simulateFlight2D = async (
     console.error('❌ 无法开始 2D 飞行模拟：参数不完整')
     return null
   }
+
+  const animEnabled = renderOpts?.forceAnimations ?? ENABLE_ANIMATIONS
   
   try {
     console.log('🎬 开始 2D 飞行模拟...')
 
-    // 动画暂停模式下：先清理可能存在的旧动画/旧 Marker，避免重复刷屏
-    if (!ENABLE_ANIMATIONS) {
+    if (!animEnabled) {
       try {
         const flowId = flowAnimationRef?.value
         if (typeof flowId === 'number') cancelAnimationFrame(flowId)
@@ -110,7 +111,8 @@ export const simulateFlight2D = async (
 
     // 3. 绘制路线
     await drawFlowPolyline(map, lineCoords, uavIconMarker, pathPolyline, flowAnimationRef, {
-      enableFlow: ENABLE_ANIMATIONS,
+      enableFlow: animEnabled,
+      enhancedStyle: Boolean(renderOpts?.enhancedStyle),
       failureStyle: Boolean(failureDisplay?.enabled)
     })
 
@@ -119,7 +121,7 @@ export const simulateFlight2D = async (
       failedEnd: flatPathCoords[flatPathCoords.length - 1]
     })
 
-    if (!ENABLE_ANIMATIONS) {
+    if (!animEnabled) {
       console.log('✅ 路径已绘制（动画已暂停）')
       return {
         animationManager: null,
@@ -127,6 +129,13 @@ export const simulateFlight2D = async (
         flatPathCoords
       }
     }
+
+    const speedMps = Math.max(1, Number(renderOpts?.speedMps || 10))
+    const totalDist = Number(pathStats?.totalDistance || 0)
+    const animDuration = Math.min(
+      90000,
+      Math.max(10000, renderOpts?.animationDurationMs || (totalDist / speedMps) * 1000)
+    )
 
     // 4. 创建动画管理器并启动动画（多层折线时只驱动最内层）
     const polyForAnim = Array.isArray(pathPolyline.value)
@@ -139,7 +148,11 @@ export const simulateFlight2D = async (
       polyForAnim,
       flowAnimationRef,
       animationId,
-      { duration: FLIGHT_CONFIG.animationDuration }
+      {
+        duration: animDuration,
+        flowSpeed: 1,
+        loop: Boolean(renderOpts?.loopAnimation)
+      }
     )
 
     animationManager.createUavIconMarker()
@@ -175,7 +188,7 @@ export const drawFlowPolyline = async (
   flowAnimationRef,
   opts = {}
 ) => {
-  const { enableFlow = true, failureStyle = false } = opts
+  const { enableFlow = true, failureStyle = false, enhancedStyle = false } = opts
   if (!map) {
     console.error('❌ 地图实例不存在')
     return
@@ -195,22 +208,28 @@ export const drawFlowPolyline = async (
   }
   pathPolyline.value = null
 
-  const color = failureStyle ? '#2563EB' : '#3B82F6'
+  const color = failureStyle ? '#2563EB' : enhancedStyle ? '#2563eb' : '#3B82F6'
 
-  // 创建多层半透明线条实现发光效果
   const layers = failureStyle
-    ? [{ width: 4, opacity: 0.9 }]
-    : [
-        { width: 8, opacity: 0.1 },
-        { width: 5, opacity: 0.3 },
-        { width: 3, opacity: 0.8 }
-      ]
+    ? [{ width: 4, opacity: 0.9, color }]
+    : enhancedStyle
+      ? [
+          { width: 14, opacity: 0.1, color: '#22d3ee' },
+          { width: 9, opacity: 0.22, color: '#38bdf8' },
+          { width: 5, opacity: 0.55, color: '#3b82f6' },
+          { width: 3, opacity: 0.95, color: '#1d4ed8' }
+        ]
+      : [
+          { width: 8, opacity: 0.1, color },
+          { width: 5, opacity: 0.3, color },
+          { width: 3, opacity: 0.8, color }
+        ]
 
   const created = []
   layers.forEach((layer) => {
     const polyline = new AMap.Polyline({
       path: flatPathCoords.map(coord => [coord.lng, coord.lat]),
-      strokeColor: color,
+      strokeColor: layer.color || color,
       strokeWeight: layer.width,
       strokeOpacity: layer.opacity,
       // 暂停动画时画实线，避免 AMap canvas 频繁重绘触发性能/警告
