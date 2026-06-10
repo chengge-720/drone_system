@@ -191,18 +191,20 @@
 
 ### 1. 数据库初始化
 
-创建数据库及用户相关表（系统启动时会自动建表，或手动执行 SQL）：
+> **💡 标准做法**：数据库是运行时数据，不能直接提交到 Git。项目中通过 SQL 脚本共享数据库结构，克隆项目后本地执行即可。
 
 ```sql
-CREATE DATABASE IF NOT EXISTS drone_system
-  DEFAULT CHARACTER SET utf8mb4
-  DEFAULT COLLATE utf8mb4_unicode_ci;
+# 方式一：在 MySQL 客户端中执行完整初始化脚本
+mysql -u root -p < src/main/resources/sql/drone_system_init.sql
 
-USE drone_system;
-
--- 用户表（系统启动时 MyBatis 会自动建表，也可手动执行下方语句）
--- 实际表结构请参考项目 mapper 文件
+# 方式二：打开 MySQL 工具（Navicat / DataGrip / 命令行）粘贴执行
+# 脚本位置：src/main/resources/sql/drone_system_init.sql
 ```
+
+初始化脚本包含：
+- ✅ **7 张表**：`user` / `role` / `menu` / `user_role` / `role_menu` / `uav_base_info` / `uav_task_info`
+- ✅ **种子数据**：默认管理员账户（用户名：`admin`，密码：`123456`）、系统菜单树、角色权限关联
+- ✅ **数据库配置**：UTF-8 编码、InnoDB 引擎、自增主键
 
 > **注意**：数据库连接配置在 [application.yml](src/main/resources/application.yml) 中：
 > - 地址：`jdbc:mysql://localhost:3306/drone_system`
@@ -378,7 +380,10 @@ drone/
 │   ├── application-local.yml      # 本机密钥（已 .gitignore）
 │   ├── mapper/                    # MyBatis XML 映射文件
 │   ├── sql/                       # SQL 建表脚本
-│   └── ai/                        # AI 助手指引文档
+│   │   ├── drone_system_init.sql  # 📌 完整初始化（7张表 + 种子数据）
+│   │   ├── uav_task_info.sql      # 任务表参考
+│   │   └── nav_menu_algorithm_compare.sql  # 菜单扩展参考
+│   ├── ai/                        # AI 助手指引文档
 ├── vue/                           # Vue 3 前端
 │   ├── src/                       # 前端源码
 │   ├── vite.config.js             # Vite 配置文件（含代理）
@@ -457,4 +462,4 @@ git push -u origin main
 
 ## 许可证
 
-本项目仅供学习交流使用。
+本项目仅供相关学习交流使用。
