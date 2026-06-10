@@ -1,0 +1,422 @@
+/**
+ * 飞行模拟 — 深色半透明 · 监控级专业感
+ */
+.flight-sim-page {
+  --fs-cyan: #22d3ee;
+  --fs-cyan-dim: rgba(34, 211, 238, 0.65);
+  --fs-panel-bg: rgba(8, 15, 28, 0.8);
+  --fs-panel-border: rgba(34, 211, 238, 0.22);
+  --fs-text: #e2e8f0;
+  --fs-text-muted: #94a3b8;
+  --fs-text-dim: #64748b;
+  position: relative;
+  width: 100%;
+  height: calc(100vh - var(--header-height) - 32px);
+  min-height: 560px;
+  overflow: hidden;
+  background: #020617;
+  border-radius: 12px;
+}
+
+.flight-sim-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: #020617;
+}
+
+.flight-sim-stage .cesium-viewer,
+.flight-sim-stage .cesium-widget,
+.flight-sim-stage .cesium-widget canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.flight-sim-stage .cesium-viewer-bottom,
+.flight-sim-stage .cesium-viewer-toolbar,
+.flight-sim-stage .cesium-viewer-animationContainer,
+.flight-sim-stage .cesium-viewer-timelineContainer {
+  display: none !important;
+}
+
+/* 左侧悬浮面板 */
+.fs-panel--left {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  bottom: 96px;
+  z-index: 10;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--fs-panel-bg);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--fs-panel-border);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+    0 16px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.fs-panel--left::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--fs-cyan), transparent);
+  opacity: 0.85;
+}
+
+.fs-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.fs-panel__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fs-text);
+  letter-spacing: 0.04em;
+}
+
+.fs-panel__badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--fs-cyan);
+  background: rgba(34, 211, 238, 0.12);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+}
+
+.fs-panel__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 2px;
+}
+
+.fs-block {
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.fs-block__label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fs-cyan-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+
+.fs-kv {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 4px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.fs-kv dt {
+  margin: 0;
+  color: var(--fs-text-dim);
+}
+
+.fs-kv dd {
+  margin: 0;
+  color: var(--fs-text);
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.fs-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.fs-field__label {
+  font-size: 10px;
+  color: var(--fs-text-dim);
+}
+
+.fs-panel--left .el-select .el-select__wrapper,
+.fs-panel--left .el-input-number .el-input__wrapper {
+  background: rgba(15, 23, 42, 0.85) !important;
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.18) inset !important;
+}
+
+.fs-panel--left .el-select .el-select__placeholder,
+.fs-panel--left .el-input-number .el-input__inner {
+  color: var(--fs-text) !important;
+  font-size: 12px;
+}
+
+/* 任务队列横向滑动 */
+.fs-queue__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.fs-queue__count {
+  font-size: 10px;
+  color: var(--fs-text-dim);
+}
+
+.fs-queue__track {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.35) transparent;
+}
+
+.fs-queue__item {
+  flex: 0 0 148px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  background: rgba(15, 23, 42, 0.65);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.fs-queue__item:hover {
+  border-color: rgba(34, 211, 238, 0.45);
+}
+
+.fs-queue__item.is-active {
+  border-color: rgba(34, 211, 238, 0.75);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.18);
+  background: rgba(8, 47, 73, 0.55);
+}
+
+.fs-queue__name {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fs-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fs-queue__meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--fs-text-dim);
+}
+
+.fs-telemetry {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.fs-telemetry__cell {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.fs-telemetry__label {
+  display: block;
+  font-size: 9px;
+  color: var(--fs-text-dim);
+  margin-bottom: 2px;
+}
+
+.fs-telemetry__value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fs-cyan);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 右上角 HUD */
+.fs-hud {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 9;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--fs-panel-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  pointer-events: none;
+}
+
+.fs-hud__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fs-text);
+  margin-bottom: 4px;
+}
+
+.fs-hud__sub {
+  font-size: 10px;
+  color: var(--fs-text-muted);
+  line-height: 1.45;
+}
+
+/* 底部悬浮控制条 */
+.fs-dock {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--fs-panel-bg);
+  backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--fs-panel-border);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.fs-dock__group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fs-dock__group--grow {
+  flex: 1;
+  min-width: 120px;
+}
+
+.fs-dock__divider {
+  width: 1px;
+  height: 28px;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.fs-dock__label {
+  font-size: 10px;
+  color: var(--fs-text-dim);
+  white-space: nowrap;
+}
+
+.fs-dock__btn {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.2s ease, opacity 0.2s ease;
+}
+
+.fs-dock__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.fs-dock__btn--primary {
+  color: #042f2e;
+  background: linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%);
+  border-color: rgba(34, 211, 238, 0.5);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.25);
+}
+
+.fs-dock__btn--primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.fs-dock__btn--ghost {
+  color: var(--fs-text);
+  background: rgba(15, 23, 42, 0.75);
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+.fs-dock__btn--ghost:hover:not(:disabled) {
+  border-color: rgba(34, 211, 238, 0.45);
+  color: var(--fs-cyan);
+}
+
+.fs-dock__btn--play {
+  min-width: 88px;
+  color: #0f172a;
+  background: linear-gradient(135deg, #5eead4 0%, #22d3ee 100%);
+}
+
+.fs-dock__progress {
+  flex: 1;
+  min-width: 140px;
+}
+
+.fs-dock__progress-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.15);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.fs-dock__progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0891b2, #22d3ee);
+  transition: width 0.2s ease;
+}
+
+.fs-dock .el-slider {
+  --el-slider-main-bg-color: #22d3ee;
+  --el-slider-runway-bg-color: rgba(148, 163, 184, 0.2);
+  min-width: 80px;
+}
+
+.fs-dock .el-switch__label {
+  color: var(--fs-text-dim) !important;
+  font-size: 11px !important;
+}
+
+.fs-dock .el-switch.is-checked .el-switch__core {
+  background: #0891b2 !important;
+  border-color: #22d3ee !important;
+}
+
+@media (max-width: 960px) {
+  .fs-panel--left {
+    width: calc(100% - 28px);
+    bottom: auto;
+    max-height: 42vh;
+  }
+
+  .fs-dock {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .fs-dock__divider {
+    display: none;
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "mission_id": 3,
+  "mission_name": "南昌大学->南昌第一医院",
+  "task_type": "rescue",
+  "coordinate_system": "wgs84",
+  "training_start_geo": [
+    28.664729,
+    115.918957,
+    110.0
+  ],
+  "training_goal_geo": [
+    28.675901,
+    115.899369,
+    110.0
+  ],
+  "grid_n": 54,
+  "margin": 6,
+  "xy_scale_m_per_grid": 56.38853525370277,
+  "z_scale_m_per_grid": 2.0962264150943395,
+  "origin_lat": 28.670315000000002,
+  "origin_lon": 115.909163,
+  "grid_center": 27.0,
+  "path_grid": [
+    [
+      47.0,
+      19.0,
+      52.475247524752476
+    ],
+    [
+      47.0,
+      19.0,
+      52.475247524752476
+    ]
+  ],
+  "path_wgs84": [
+    [
+      28.6662626253546,
+      115.92070961052634,
+      110.0
+    ],
+    [
+      28.6662626253546,
+      115.92070961052634,
+      110.0
+    ]
+  ],
+  "rl_success": true,
+  "planner_mode": "q_table",
+  "model_path": "E:\\java\\drone\\python_service\\models\\q_table_mission_3.npz",
+  "cached_at": "2026-06-03T12:02:07.720985+00:00"
+}
