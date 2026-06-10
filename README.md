@@ -130,6 +130,50 @@
 
 ---
 
+## 系统功能展示
+
+### 🏠 系统首页
+
+![系统首页](file/%E7%B3%BB%E7%BB%9F%E9%A6%96%E9%A1%B5.png)
+
+### 🛸 无人机管理
+
+<table>
+  <tr>
+    <td align="center"><b>无人机基础信息管理</b></td>
+    <td align="center"><b>无人机任务管理</b></td>
+  </tr>
+  <tr>
+    <td><img src="file/%E6%97%A0%E4%BA%BA%E6%9C%BA%E5%9F%BA%E7%A1%80%E4%BF%A1%E6%81%AF%E7%AE%A1%E7%90%86.png" alt="无人机基础信息管理"/></td>
+    <td><img src="file/%E6%97%A0%E4%BA%BA%E6%9C%BA%E4%BB%BB%E5%8A%A1%E7%AE%A1%E7%90%86.png" alt="无人机任务管理"/></td>
+  </tr>
+</table>
+
+### 🗺️ 路径规划
+
+<table>
+  <tr>
+    <td align="center"><b>任务路径规划</b></td>
+    <td align="center"><b>不同算法下路径对比</b></td>
+  </tr>
+  <tr>
+    <td><img src="file/%E4%BB%BB%E5%8A%A1%E8%B7%AF%E5%BE%84%E8%A7%84%E5%88%92.png" alt="任务路径规划"/></td>
+    <td><img src="file/%E4%B8%8D%E5%90%8C%E7%AE%97%E6%B3%95%E4%B8%8B%E8%B7%AF%E5%BE%84%E5%AF%B9%E6%AF%94.png" alt="不同算法下路径对比"/></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><b>不同算法基本信息展示</b></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="file/%E4%B8%8D%E5%90%8C%E7%AE%97%E6%B3%95%E5%9F%BA%E6%9C%AC%E4%BF%A1%E6%81%AF%E5%B1%95%E7%A4%BA.png" alt="不同算法基本信息展示"/></td>
+  </tr>
+</table>
+
+### 🌍 三维地图仿真
+
+![Cesium 3D 仿真](file/cesium3D%E4%BB%BF%E7%9C%9F.png)
+
+---
+
 ## 前置环境
 
 | 依赖 | 版本要求 | 获取方式 |
